@@ -1,0 +1,3 @@
+{ "name": "finance-tracker-css", "private": true,
+  "scripts": { "build": "tailwindcss -c tailwind.config.js -i input.css -o ../assets/css/tailwind.css --minify" },
+  "devDependencies": { "tailwindcss": "3.4.17" } }

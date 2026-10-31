@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
+    <title>Gowtham Schedules & Expense Tracker (Offline)</title>
+    <!-- All assets are local, so the app works with no internet connection -->
+    <link rel="stylesheet" href="assets/css/tailwind.css">
+    <link rel="stylesheet" href="assets/css/fontawesome.min.css">
+    <script src="assets/js/alpine.min.js" defer></script>
+    <script src="assets/js/sql-wasm.js"></script>
+    <script src="assets/js/sql-wasm-binary.js"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+        ::-webkit-scrollbar-thumb { background: rgba(51, 65, 85, 0.8); border-radius: 9999px; }
+        input, select, textarea { font-size: 16px !important; }
+        @media (min-width: 640px) { input, select, textarea { font-size: 0.875rem !important; } }
+        html { color-scheme: dark; }
+        #bottomNav { padding-bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px)); }
+        /* Tables become stacked cards on phones */
+        @media (max-width: 767px) {
+            table.rt thead { display: none; }
+            table.rt, table.rt tbody, table.rt tr, table.rt td { display: block; width: 100%; }
+            table.rt tr { padding: .5rem .25rem; }
+            table.rt td { padding: .25rem .5rem !important; }
+            table.rt td::before { content: attr(data-label); display: block; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; margin-bottom: 2px; }
+            table.rt td[data-label=""]::before { display: none; }
+            table.rt td input:not([type=checkbox]), table.rt td select { width: 100%; }
+        }
+        @media (prefers-reduced-motion: reduce) { * { transition-duration: .01ms !important; } }
+    </style>
+</head>
+<body class="min-h-full flex flex-col font-sans bg-slate-950 text-slate-100 antialiased selection:bg-sky-500 selection:text-white" x-data="trackerApp()" x-init="initDB()">
+
+    <!-- Toast Overlay -->
+    <div x-show="toast.show" role="status" aria-live="polite"
+         x-transition:enter="transition ease-out duration-300 transform"
+         x-transition:enter-start="opacity-0 translate-y-2"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-200 transform"
+         x-transition:leave-start="opacity-100 translate-y-0"
+         x-transition:leave-end="opacity-0 translate-y-2"
+         class="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:max-w-sm z-[60] bg-slate-800/95 backdrop-blur-md border border-slate-700 rounded-2xl p-4 shadow-2xl flex items-center gap-3 text-sm text-slate-100"
+         style="display: none;">
+        <div class="p-2 rounded-xl" :class="toast.type === 'error' ? 'bg-red-500/20 text-red-400' : toast.type === 'info' ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400'">
+            <i class="fa-solid text-lg" :class="toast.type === 'error' ? 'fa-circle-exclamation' : toast.type === 'info' ? 'fa-circle-info' : 'fa-circle-check'"></i>
+        </div>
+        <span x-text="toast.message" class="font-medium"></span>
+    </div>
+
+    <!-- Edit Modal for Mobile Row Selection -->
+    <div x-show="editModal.show" @click.self="cancelEdit()" @keydown.escape.window="editModal.show && cancelEdit()" role="dialog" aria-modal="true" aria-label="Edit commitment" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/80 backdrop-blur-sm p-0 sm:p-4" style="display: none;">
+        <div class="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-pen-to-square text-sky-400"></i> Edit Commitment
+                </h3>
+                <button @click="cancelEdit()" aria-label="Close" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <template x-if="editModal.item">
+                <div class="space-y-3 text-xs">
+                    <div>
+                        <label class="text-slate-400 block mb-1">Commitment / Item Name</label>
+                        <input type="text" x-model="editModal.item.name" :class="bad('c', editModal.item, 'name')" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-slate-400 block mb-1">Region</label>
+                            <select x-model="editModal.item.region" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                                <option value="UAE">UAE</option>
+                                <option value="India">India</option>
+                                <option value="Global">Global</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-slate-400 block mb-1">Category</label>
+                            <input type="text" x-model="editModal.item.category" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-slate-400 block mb-1">Amount</label>
+                            <input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="editModal.item.amount" :class="bad('c', editModal.item, 'amount')" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                        </div>
+                        <div>
+                            <label class="text-slate-400 block mb-1">Currency</label>
+                            <select x-model="editModal.item.currency" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                                <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === editModal.item.currency" x-text="curr"></option></template>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-slate-400 block mb-1">Frequency</label>
+                            <select x-model="editModal.item.frequency" @change="$nextTick(() => onFreqChange(editModal.item))" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                                <option value="Monthly">Monthly</option>
+                                <option value="Yearly">Yearly</option>
+                                <option value="One-Time">One-Time</option>
+                                <option value="Bi-Monthly">Bi-Monthly</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-slate-400 block mb-1">Due Date / Specification</label>
+                            <template x-if="editModal.item.frequency === 'Monthly'"><select x-model.number="editModal.item.dueDay" :class="bad('c', editModal.item, 'dueDay')" aria-label="Due day of month" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(editModal.item.dueDay)" x-text="d"></option></template></select></template>
+                            <template x-if="editModal.item.frequency === 'One-Time'"><input type="date" x-model="editModal.item.dueDate" :class="bad('c', editModal.item, 'dueDate')" aria-label="Due date" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"></template>
+                            <template x-if="editModal.item.frequency === 'Yearly' || editModal.item.frequency === 'Bi-Monthly'"><div class="flex gap-1" :title="editModal.item.frequency === 'Bi-Monthly' ? 'First due month; repeats every 2 months' : 'Due once a year'">
+                                <select x-model.number="editModal.item.dueMonth" @change="$nextTick(() => fixDay(editModal.item))" :class="bad('c', editModal.item, 'dueMonth')" aria-label="Due month" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"><option value="">Month</option><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === Number(editModal.item.dueMonth)" x-text="mn"></option></template></select>
+                                <select x-model.number="editModal.item.dueDay" :class="bad('c', editModal.item, 'dueDay')" aria-label="Due day" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"><option value="">Day</option><template x-for="d in dayList(editModal.item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(editModal.item.dueDay)" x-text="d"></option></template></select>
+                            </div></template>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-slate-400 block mb-1">Method</label>
+                            <input type="text" x-model="editModal.item.method" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                        </div>
+                        <div>
+                            <label class="text-slate-400 block mb-1">Status</label>
+                            <select x-model="editModal.item.status" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
+                                <option value="Pending">Pending</option>
+                                <option value="Paid">Paid</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-slate-400 block mb-1">Notes</label>
+                        <textarea x-model="editModal.item.notes" rows="2" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"></textarea>
+                    </div>
+                    <div class="flex gap-2 pt-2">
+                        <button @click="saveEdit(true)" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl font-bold flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-check"></i> Mark as Paid
+                        </button>
+                        <button @click="saveEdit(false)" class="flex-1 bg-sky-600 hover:bg-sky-500 text-white py-2 rounded-xl font-bold">Save Changes</button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black shadow-md shadow-sky-500/20">
+                    <i class="fa-solid fa-vault text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="text-base font-bold tracking-tight text-white flex items-center gap-2">
+                        Gowtham Schedules & Pay
+                        <span class="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">v3.2</span>
+                    </h1>
+                    <p class="text-xs text-slate-400"><span class="hidden sm:inline">Unified SQLite Engine • </span><span :class="saveState === 'error' ? 'text-red-400' : saveState === 'dirty' ? 'text-amber-400' : 'text-emerald-400'" x-text="saveLabel"></span></p>
+                </div>
+            </div>
+
+            <!-- Desktop Nav -->
+            <nav class="hidden md:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+                <button @click="tab = 'dashboard'" :class="tab === 'dashboard' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                    <i class="fa-solid fa-chart-pie"></i> Dashboard
+                </button>
+                <button @click="tab = 'pay'" :class="tab === 'pay' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                    <i class="fa-solid fa-credit-card"></i> Pay Commitments
+                </button>
+                <button @click="tab = 'log'" :class="tab === 'log' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                    <i class="fa-solid fa-receipt"></i> Expense Log
+                </button>
+                <button @click="tab = 'events'" :class="tab === 'events' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-check"></i> Events & Tasks
+                </button>
+            </nav>
+
+            <!-- Export / Import -->
+            <div class="flex items-center gap-2">
+                <button @click="exportSQLite()" title="Export SQLite DB" class="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Export DB</span>
+                </button>
+                <button @click="exportCSV()" title="Export CSV" class="bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-file-csv"></i> <span class="hidden sm:inline">CSV</span>
+                </button>
+                <label title="Import DB" class="focus-within:ring-2 focus-within:ring-sky-500 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5">
+                    <i class="fa-solid fa-upload"></i> <span class="hidden sm:inline">Import DB</span>
+                    <input type="file" @change="importSQLite($event)" class="sr-only" accept=".db,.sqlite,.sqlite3" aria-label="Import SQLite database">
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main @input="onEdit($event)" @change="onEdit($event)" class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 mb-20 md:mb-6 overflow-x-hidden">
+
+        <p x-show="loading" class="text-center text-xs text-slate-400 py-6">Loading database…</p>
+        <div x-show="loadError" style="display:none" class="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 mb-4 text-xs text-red-300 flex items-center justify-between gap-3">
+            <span x-text="loadError"></span>
+            <button @click="location.reload()" class="bg-red-600 hover:bg-red-500 text-white font-bold px-3 py-1.5 rounded-xl shrink-0">Reload</button>
+        </div>
+
+        <!-- ================= DASHBOARD TAB ================= -->
+        <div x-show="tab === 'dashboard'" x-transition:enter="transition ease-out duration-200" class="space-y-6">
+            
+            <template x-if="!loading && !commitments.length && !expenseLogs.length && !eventsList.length">
+                <div class="bg-sky-950/40 border border-sky-800/60 rounded-2xl p-5 text-center space-y-3">
+                    <p class="text-sm font-bold text-white">Welcome! Your tracker is empty.</p>
+                    <p class="text-xs text-slate-300">Add your first commitment to start tracking dues, or import an existing database from the header.</p>
+                    <button @click="tab = 'pay'; addItem()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-4 py-2 rounded-xl font-semibold"><i class="fa-solid fa-plus"></i> Add first commitment</button>
+                </div>
+            </template>
+
+            <!-- Payment Metrics Overview (per currency, this month's due items only) -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-lg">
+                    <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Required This Month</p>
+                    <p class="text-xl font-black text-sky-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(requiredThisMonth)"></p>
+                    <p class="text-[10px] text-slate-500 mt-1" x-text="dueThisMonthItems.length + ' commitment(s) due this month'"></p>
+                </div>
+                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-lg">
+                    <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Paid This Month</p>
+                    <p class="text-xl font-black text-emerald-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(paidThisMonth)"></p>
+                    <p class="text-[10px] text-slate-500 mt-1" x-text="paidItems.length + ' of ' + dueThisMonthItems.length + ' paid'"></p>
+                </div>
+                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-lg">
+                    <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Pending Dues</p>
+                    <p class="text-xl font-black text-amber-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(pendingThisMonth)"></p>
+                    <p class="text-[10px] text-amber-500/80 mt-1 font-medium" x-text="overdueCount + ' overdue item(s)'"></p>
+                </div>
+            </div>
+
+            <!-- Spending Insights Grid (expense log, per currency) -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
+                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Current Month Spend</p>
+                    <p class="text-base font-bold text-slate-100 mt-1 whitespace-pre-line break-words" x-text="fmtMap(currentMonthExpense)"></p>
+                </div>
+                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
+                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Prev Month Spend</p>
+                    <p class="text-base font-bold text-slate-300 mt-1 whitespace-pre-line break-words" x-text="fmtMap(prevMonthExpense)"></p>
+                </div>
+                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
+                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Change vs Prev Month</p>
+                    <p class="text-base font-bold mt-1 whitespace-pre-line break-words" :class="diffIsUp ? 'text-red-400' : 'text-emerald-400'" x-text="fmtMap(twoMonthDiff, true)"></p>
+                </div>
+                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
+                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Year-To-Date (YTD) Spend</p>
+                    <p class="text-base font-bold text-purple-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(ytdExpense)"></p>
+                </div>
+            </div>
+
+            <!-- Urgent Overdue / Upcoming Alerts -->
+            <template x-if="overdueItems.length > 0">
+                <div class="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 space-y-3">
+                    <h3 class="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Overdue Dues Require Attention (<span x-text="overdueItems.length"></span>)
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <template x-for="item in overdueItems" :key="item.id">
+                            <div class="bg-slate-900/80 p-3 rounded-xl border border-red-900/50 flex justify-between items-center text-xs">
+                                <div>
+                                    <p class="font-bold text-white" x-text="item.name"></p>
+                                    <p class="text-[10px] text-slate-400" x-text="'Due: ' + getDueDateDisplay(item) + ' • ' + item.category"></p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="font-black text-red-400" x-text="money(item.amount, item.currency)"></p>
+                                    <button @click="markAsPaid(item)" class="text-[10px] text-emerald-400 font-bold hover:underline mt-0.5">Mark Paid</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Upcoming Events -->
+            <template x-if="upcomingEvents.length > 0">
+                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 space-y-2">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-calendar-check text-amber-400"></i> Upcoming Events (next 45 days)
+                    </h3>
+                    <template x-for="ev in upcomingEvents" :key="ev.id">
+                        <div class="flex justify-between gap-3 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+                            <span class="text-white font-medium" x-text="ev.name + ' • ' + ev.date"></span>
+                            <span class="text-slate-400 text-right" x-text="(ev.days === 0 ? 'Today' : 'in ' + ev.days + ' day(s)') + (ev.budget ? ' • ' + money(ev.budget, ev.currency) : '')"></span>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <!-- Category Spending Breakdown -->
+            <div class="bg-slate-900/60 backdrop-blur-md p-5 rounded-2xl border border-slate-800 space-y-4">
+                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                    <i class="fa-solid fa-chart-bar text-sky-400"></i> Category Spending (Year-To-Date)
+                </h3>
+                <p x-show="!categoryBreakdown.length" class="text-xs text-slate-500">No expenses logged this year yet.</p>
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    <template x-for="row in categoryBreakdown" :key="row.cat">
+                        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+                            <p class="text-[10px] text-slate-400 uppercase font-medium truncate" x-text="row.cat"></p>
+                            <p class="text-sm font-bold text-sky-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(row.totals)"></p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button @click="clearAllData()" class="text-[11px] text-slate-500 hover:text-red-400 flex items-center gap-1.5"><i class="fa-solid fa-trash-can"></i> Clear all data</button>
+            </div>
+
+        </div>
+
+        <!-- ================= PAY COMMITMENTS TAB ================= -->
+        <div x-show="tab === 'pay'" x-transition:enter="transition ease-out duration-200" class="space-y-4">
+            
+            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800">
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-credit-card text-sky-400"></i> Pay Commitments Module
+                    </h2>
+                    <p class="text-xs text-slate-400">Unified schedule for UAE, India & Global recurring dues</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button @click="addItem()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition shadow-md shadow-sky-600/20 flex items-center gap-1.5">
+                        <i class="fa-solid fa-plus"></i> Add Commitment
+                    </button>
+                    <button @click="persist()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition shadow-md shadow-emerald-600/20 flex items-center gap-1.5">
+                        <i class="fa-solid fa-floppy-disk"></i> Save DB
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filter & Search Control Toolbar -->
+            <div data-nosave class="bg-slate-900/40 p-3 rounded-2xl border border-slate-800/80 grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+                <div class="col-span-2 sm:col-span-1">
+                    <input type="text" x-model="filters.search" placeholder="Search item, notes..." class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white placeholder-slate-500 focus:outline-none focus:border-sky-500">
+                </div>
+                <div>
+                    <select x-model="filters.region" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
+                        <option value="All">All Regions</option>
+                        <option value="UAE">UAE</option>
+                        <option value="India">India</option>
+                        <option value="Global">Global</option>
+                    </select>
+                </div>
+                <div>
+                    <select x-model="filters.frequency" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
+                        <option value="All">All Frequencies</option>
+                        <option value="Monthly">Monthly</option>
+                        <option value="Yearly">Yearly</option>
+                        <option value="One-Time">One-Time</option>
+                        <option value="Bi-Monthly">Bi-Monthly</option>
+                    </select>
+                </div>
+                <div>
+                    <select x-model="filters.currency" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
+                        <option value="All">All Currencies</option>
+                        <template x-for="curr in currencies" :key="curr"><option :value="curr" x-text="curr"></option></template>
+                    </select>
+                </div>
+                <div>
+                    <select x-model="filters.sortBy" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
+                        <option value="dueDate">Sort: Due Day</option>
+                        <option value="amount">Sort: Amount</option>
+                        <option value="name">Sort: Name</option>
+                        <option value="category">Sort: Category</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Multi-Select Live Dynamic Total Bar -->
+            <template x-if="selectedItems.length > 0">
+                <div class="bg-sky-950/60 border border-sky-800/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs text-sky-200">
+                    <div class="flex items-center gap-2">
+                        <span class="font-bold bg-sky-500 text-slate-950 px-2 py-0.5 rounded-full text-[10px]" x-text="selectedItems.length + ' Selected'"></span>
+                        <span>Selected Total:</span>
+                        <span class="font-black text-white text-sm" x-text="selectedTotalsDisplay"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="markSelectedAsPaid()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl transition">
+                            <i class="fa-solid fa-check"></i> Mark Selected as Paid
+                        </button>
+                        <button @click="selectedRowIds = []" class="text-slate-400 hover:text-white">Clear</button>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Ultra-Dense Mobile View -->
+            <p x-show="!filteredCommitments.length" class="text-center text-xs text-slate-500 py-8">No commitments match your filters. Use “Add Commitment” to create one.</p>
+
+            <template x-if="!isDesktop"><div class="space-y-2">
+                <template x-for="item in filteredCommitments" :key="item.id">
+                    <div class="bg-slate-900/60 backdrop-blur-md rounded-2xl p-3 border border-slate-800 space-y-2 text-xs">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center gap-2.5">
+                                <input type="checkbox" :value="item.id" x-model.number="selectedRowIds" data-nosave class="rounded bg-slate-950 border-slate-700 text-sky-500 w-4 h-4">
+                                <div>
+                                    <span class="font-bold text-white text-xs" x-text="item.name || 'Unnamed Item'"></span>
+                                    <p x-show="errList('c', item).length" class="text-[10px] text-red-400" x-text="errList('c', item).join(' • ')"></p>
+                                    <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5">
+                                        <span class="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 font-mono" x-text="item.region"></span>
+                                        <span x-text="item.category"></span>
+                                        <span>•</span>
+                                        <span class="text-amber-400 font-medium" x-text="'Due: ' + getDueDateDisplay(item)"></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <span class="font-black text-sky-400 text-sm block" x-text="money(item.amount, item.currency)"></span>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium" :class="statusClass(item)" x-text="statusLabel(item)"></span>
+                            </div>
+                        </div>
+
+                        <!-- Mobile Inline Notes with Truncation Toggle -->
+                        <template x-if="item.notes">
+                            <div class="bg-slate-950/60 p-2 rounded-xl border border-slate-800/60 text-[11px] text-slate-300 flex justify-between items-start gap-2">
+                                <p class="leading-tight" x-text="item.showFullNotes || item.notes.length <= 40 ? item.notes : item.notes.substring(0, 40) + '...'"></p>
+                                <template x-if="item.notes.length > 40">
+                                    <button @click="item.showFullNotes = !item.showFullNotes" class="text-sky-400 font-bold text-[10px] shrink-0" x-text="item.showFullNotes ? 'less' : 'more'"></button>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- Mobile Row Action Bar -->
+                        <div class="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[11px]">
+                            <button @click="item.status === 'Paid' ? markAsPending(item) : markAsPaid(item)" class="text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1">
+                                <i class="fa-solid text-[10px]" :class="item.status === 'Paid' ? 'fa-rotate-left' : 'fa-check'"></i> <span x-text="item.status === 'Paid' ? 'Mark Pending' : 'Mark Paid'"></span>
+                            </button>
+                            <div class="flex items-center gap-3">
+                                <button @click="openEditModal(item)" class="text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1">
+                                    <i class="fa-solid fa-pen"></i> Edit
+                                </button>
+                                <button @click="deleteCommitment(item)" aria-label="Delete commitment" class="text-red-400 hover:text-red-300 font-semibold">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div></template>
+
+            <!-- Desktop Excel-like Table View -->
+            <template x-if="isDesktop"><div class="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 overflow-x-auto shadow-lg">
+                <table class="w-full text-left text-xs text-slate-300">
+                    <thead class="bg-slate-950/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                        <tr>
+                            <th class="p-3 w-8 text-center"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected" data-nosave aria-label="Select all" class="rounded bg-slate-950 border-slate-700"></th>
+                            <th class="p-3">Commitment Item</th>
+                            <th class="p-3">Region</th>
+                            <th class="p-3">Category</th>
+                            <th class="p-3">Amount & Currency</th>
+                            <th class="p-3">Frequency</th>
+                            <th class="p-3">Due Specification</th>
+                            <th class="p-3">Method</th>
+                            <th class="p-3">Notes</th>
+                            <th class="p-3">Status</th>
+                            <th class="p-3 text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800/60">
+                        <template x-for="item in filteredCommitments" :key="item.id">
+                            <tr class="hover:bg-slate-800/30 transition" :data-row="item.id">
+                                <td class="p-2.5 text-center">
+                                    <input type="checkbox" :value="item.id" x-model.number="selectedRowIds" data-nosave class="rounded bg-slate-950 border-slate-700 text-sky-500">
+                                </td>
+                                <td class="p-2.5"><input type="text" x-model="item.name" :class="bad('c', item, 'name')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none focus:border-sky-500"></td>
+                                <td class="p-2.5">
+                                    <select x-model="item.region" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
+                                        <option value="UAE">UAE</option>
+                                        <option value="India">India</option>
+                                        <option value="Global">Global</option>
+                                    </select>
+                                </td>
+                                <td class="p-2.5"><input type="text" x-model="item.category" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none focus:border-sky-500"></td>
+                                <td class="p-2.5 flex items-center gap-1">
+                                    <input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="item.amount" :class="bad('c', item, 'amount')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 w-20 text-xs text-white focus:outline-none">
+                                    <select x-model="item.currency" class="bg-slate-950 border border-slate-700/80 rounded-xl px-1.5 py-1.5 text-xs text-white">
+                                        <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === item.currency" x-text="curr"></option></template>
+                                    </select>
+                                </td>
+                                <td class="p-2.5">
+                                    <select x-model="item.frequency" @change="$nextTick(() => onFreqChange(item))" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
+                                        <option value="Monthly">Monthly</option>
+                                        <option value="Yearly">Yearly</option>
+                                        <option value="One-Time">One-Time</option>
+                                        <option value="Bi-Monthly">Bi-Monthly</option>
+                                    </select>
+                                </td>
+                                <td class="p-2.5">
+                                    <template x-if="item.frequency === 'Monthly'"><select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day of month" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></template>
+                            <template x-if="item.frequency === 'One-Time'"><input type="date" x-model="item.dueDate" :class="bad('c', item, 'dueDate')" aria-label="Due date" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"></template>
+                            <template x-if="item.frequency === 'Yearly' || item.frequency === 'Bi-Monthly'"><div class="flex gap-1" :title="item.frequency === 'Bi-Monthly' ? 'First due month; repeats every 2 months' : 'Due once a year'">
+                                <select x-model.number="item.dueMonth" @change="$nextTick(() => fixDay(item))" :class="bad('c', item, 'dueMonth')" aria-label="Due month" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Month</option><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === Number(item.dueMonth)" x-text="mn"></option></template></select>
+                                <select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Day</option><template x-for="d in dayList(item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select>
+                            </div></template>
+                                </td>
+                                <td class="p-2.5"><input type="text" x-model="item.method" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none"></td>
+                                <td class="p-2.5"><input type="text" x-model="item.notes" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none"></td>
+                                <td class="p-2.5"><span class="text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap" :class="statusClass(item)" x-text="statusLabel(item)"></span>
+                                    <span x-show="errList('c', item).length" :title="errList('c', item).join(', ')" class="text-red-400 ml-1"><i class="fa-solid fa-triangle-exclamation"></i></span></td>
+                                <td class="p-2.5 text-center">
+                                    <div class="flex items-center justify-center gap-1">
+                                        <button @click="item.status === 'Paid' ? markAsPending(item) : markAsPaid(item)" :title="item.status === 'Paid' ? 'Mark as Pending' : 'Mark as Paid'" :aria-label="item.status === 'Paid' ? 'Mark as Pending' : 'Mark as Paid'" class="text-emerald-400 hover:text-emerald-300 p-1.5 rounded-lg">
+                                            <i class="fa-solid text-sm" :class="item.status === 'Paid' ? 'fa-rotate-left' : 'fa-circle-check'"></i>
+                                        </button>
+                                        <button @click="deleteCommitment(item)" title="Delete" aria-label="Delete commitment" class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg">
+                                            <i class="fa-solid fa-trash-can text-sm"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div></template>
+        </div>
+
+        <!-- ================= EXPENSE LOG TAB ================= -->
+        <div x-show="tab === 'log'" x-transition:enter="transition ease-out duration-200" class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800">
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-receipt text-sky-400"></i> Monthly Actual Expense Log
+                    </h2>
+                    <p class="text-xs text-slate-400">Automated ledger synced from payments & custom entries</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="addLogEntry()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-plus"></i> Add Log Row
+                    </button>
+                    <button @click="persist()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-floppy-disk"></i> Save DB
+                    </button>
+                </div>
+            </div>
+
+            <!-- Expense Table -->
+            <div class="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 overflow-x-auto shadow-lg">
+                <table class="w-full text-left text-xs text-slate-300 rt md:min-w-[700px]">
+                    <thead class="bg-slate-950/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                        <tr>
+                            <th class="p-3">Date</th>
+                            <th class="p-3">Region</th>
+                            <th class="p-3">Category</th>
+                            <th class="p-3">Item / Description</th>
+                            <th class="p-3">Amount</th>
+                            <th class="p-3">Currency</th>
+                            <th class="p-3">Method</th>
+                            <th class="p-3">Notes</th>
+                            <th class="p-3 text-center">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800/60">
+                        <template x-for="log in expenseLogs" :key="log.id">
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td data-label="Date" class="p-2.5"><input type="date" x-model="log.date" :class="bad('l', log, 'date')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"></td>
+                                <td data-label="Region" class="p-2.5">
+                                    <select x-model="log.region" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
+                                        <option value="UAE">UAE</option>
+                                        <option value="India">India</option>
+                                        <option value="Global">Global</option>
+                                    </select>
+                                </td>
+                                <td data-label="Category" class="p-2.5"><input type="text" x-model="log.category" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
+                                <td data-label="Item / Description" class="p-2.5"><input type="text" x-model="log.item" :class="bad('l', log, 'item')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
+                                <td data-label="Amount" class="p-2.5"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="log.amount" :class="bad('l', log, 'amount')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-24 text-xs text-white"></td>
+                                <td data-label="Currency" class="p-2.5">
+                                    <select x-model="log.currency" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
+                                        <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === log.currency" x-text="curr"></option></template>
+                                    </select>
+                                </td>
+                                <td data-label="Method" class="p-2.5"><input type="text" x-model="log.method" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
+                                <td data-label="Notes" class="p-2.5"><input type="text" x-model="log.notes" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
+                                <td data-label="" class="p-2.5 text-center">
+                                    <span x-show="errList('l', log).length" :title="errList('l', log).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                    <button @click="deleteLog(log)" aria-label="Delete log row" class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg"><i class="fa-solid fa-trash-can text-sm"></i></button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="!expenseLogs.length" class="text-center text-xs text-slate-500 py-8">No expenses logged yet. Mark a commitment as paid, or add a row.</p>
+            </div>
+        </div>
+
+        <!-- ================= EVENTS & TASKS TAB ================= -->
+        <div x-show="tab === 'events'" x-transition:enter="transition ease-out duration-200" class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800">
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-calendar-check text-amber-400"></i> Events & Milestones
+                    </h2>
+                    <p class="text-xs text-slate-400">Birthdays, anniversaries, and planned budgets</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="addEvent()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-plus"></i> Add Event
+                    </button>
+                    <button @click="persist()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-floppy-disk"></i> Save DB
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 overflow-x-auto shadow-lg">
+                <table class="w-full text-left text-xs text-slate-300 rt md:min-w-[600px]">
+                    <thead class="bg-slate-950/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                        <tr>
+                            <th class="p-3">Event / Person</th>
+                            <th class="p-3">Relationship</th>
+                            <th class="p-3">Date (every year)</th>
+                            <th class="p-3">Budget</th>
+                            <th class="p-3">Currency</th>
+                            <th class="p-3">Notes</th>
+                            <th class="p-3 text-center">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800/60">
+                        <template x-for="ev in eventsList" :key="ev.id">
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td data-label="Event / Person" class="p-2.5"><input type="text" x-model="ev.name" :class="bad('e', ev, 'name')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
+                                <td data-label="Relationship" class="p-2.5"><input type="text" x-model="ev.relation" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
+                                <td data-label="Date (day / month)" class="p-2.5"><div class="flex gap-1">
+                                    <select x-model.number="ev.eventMonth" @change="$nextTick(() => fixDay(ev, 'eventMonth', 'eventDay'))" :class="bad('e', ev, 'eventMonth')" aria-label="Event month" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Month</option><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === Number(ev.eventMonth)" x-text="mn"></option></template></select>
+                                    <select x-model.number="ev.eventDay" :class="bad('e', ev, 'eventDay')" aria-label="Event day" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Day</option><template x-for="d in dayList(ev.eventMonth)" :key="d"><option :value="d" :selected="d === Number(ev.eventDay)" x-text="d"></option></template></select>
+                                </div></td>
+                                <td data-label="Budget" class="p-2.5"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="ev.budget" :class="bad('e', ev, 'budget')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-24 text-xs text-white"></td>
+                                <td data-label="Currency" class="p-2.5">
+                                    <select x-model="ev.currency" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
+                                        <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === ev.currency" x-text="curr"></option></template>
+                                    </select>
+                                </td>
+                                <td data-label="Notes" class="p-2.5"><input type="text" x-model="ev.notes" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
+                                <td data-label="" class="p-2.5 text-center">
+                                    <span x-show="errList('e', ev).length" :title="errList('e', ev).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                    <button @click="deleteEvent(ev)" aria-label="Delete event" class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg"><i class="fa-solid fa-trash-can text-sm"></i></button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p x-show="!eventsList.length" class="text-center text-xs text-slate-500 py-8">No events yet. Add a birthday or anniversary.</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Mobile Bottom Navigation Bar -->
+    <nav id="bottomNav" aria-label="Primary" class="md:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 z-40 px-2 py-1.5 flex justify-around items-center">
+        <button @click="tab = 'dashboard'" :class="tab === 'dashboard' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
+            <i class="fa-solid fa-chart-pie text-base mb-0.5"></i>
+            <span>Dashboard</span>
+        </button>
+        <button @click="tab = 'pay'" :class="tab === 'pay' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
+            <i class="fa-solid fa-credit-card text-base mb-0.5"></i>
+            <span>Pay</span>
+        </button>
+        <button @click="tab = 'log'" :class="tab === 'log' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
+            <i class="fa-solid fa-receipt text-base mb-0.5"></i>
+            <span>Expense Log</span>
+        </button>
+        <button @click="tab = 'events'" :class="tab === 'events' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
+            <i class="fa-solid fa-calendar-check text-base mb-0.5"></i>
+            <span>Events</span>
+        </button>
+    </nav>
+
+    <!-- WASM SQLite Engine Logic & App State -->
+    <script>
+        const LS_KEY = 'sqlite_db_b64';          // compact base64 storage (v3.1+)
+        const LS_LEGACY = 'sqlite_db_binary';    // old JSON-array storage, migrated automatically
+        const SCHEMA = {
+            // INTEGER = whole numbers (day, month) | REAL = money (rounded to 2 decimals) | TEXT = text, ISO dates (YYYY-MM-DD), month keys (YYYY-MM)
+            commitments:  { name:'TEXT', region:'TEXT', category:'TEXT', amount:'REAL', currency:'TEXT', frequency:'TEXT', dueDay:'INTEGER', dueMonth:'INTEGER', dueDate:'TEXT', method:'TEXT', notes:'TEXT', status:'TEXT', paidMonth:'TEXT' },
+            expense_logs: { date:'TEXT', region:'TEXT', category:'TEXT', item:'TEXT', amount:'REAL', currency:'TEXT', method:'TEXT', notes:'TEXT' },
+            events_list:  { name:'TEXT', relation:'TEXT', eventDay:'INTEGER', eventMonth:'INTEGER', budget:'REAL', currency:'TEXT', notes:'TEXT', date:'TEXT' /* legacy "15-May" text, migrated to eventDay/eventMonth */ }
+        };
+        const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+        const CYCLE = { 'Monthly': 1, 'Bi-Monthly': 2, 'Yearly': 12 };
+        let db = null, SQLMod = null;
+
+        /* ---------- helpers ---------- */
+        const store = {
+            get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+            set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+            del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+        };
+        const pad = n => String(n).padStart(2, '0');
+        const localISO = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;   // local time, not UTC
+        const monthKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+        const prevMonthKey = d => monthKey(new Date(d.getFullYear(), d.getMonth() - 1, 1));                         // safe on the 29th-31st
+        const monthsBetween = (a, b) => { const [ay, am] = a.split('-').map(Number), [by, bm] = b.split('-').map(Number); return (by - ay) * 12 + (bm - am); };
+        const isISO = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+        const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const daysInMonth = m => [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1] || 31;   // Feb allows 29 (leap years)
+        const toInt = v => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isInteger(n) ? n : null; };
+        const toMoney = v => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+        const validISO = s => { if (!isISO(s)) return false; const [y, m, d] = s.split('-').map(Number); const t = new Date(y, m - 1, d); return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d; };
+        const parseDayMon = s => {
+            const m = /^(\d{1,2})[-\/ ]([A-Za-z]{3})/.exec(String(s || '').trim());
+            if (!m) return null;
+            const mi = MONTHS.indexOf(m[2].toLowerCase()), d = +m[1];
+            return (mi < 0 || d < 1 || d > 31) ? null : { d, m: mi };
+        };
+        const fmtNum = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const fmtMoney = (v, c) => (c ? c + ' ' : '') + fmtNum(v);
+        const toB64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+        const fromB64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+        const rowsOf = sql => {
+            const res = db.exec(sql);
+            if (!res.length) return [];
+            const cols = res[0].columns;
+            return res[0].values.map(r => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+        };
+        const tx = fn => { db.run('BEGIN'); try { fn(); db.run('COMMIT'); } catch (e) { try { db.run('ROLLBACK'); } catch (_) {} throw e; } };
+        const INS = t => `INSERT INTO ${t} (id, ${Object.keys(SCHEMA[t]).join(', ')}) VALUES (${Object.keys(SCHEMA[t]).map(() => '?').concat('?').join(', ')})`;
+        const rowVals = (t, r) => [r.id ?? null, ...Object.entries(SCHEMA[t]).map(([k, ty]) => ty === 'REAL' ? toMoney(r[k]) : ty === 'INTEGER' ? toInt(r[k]) : String(r[k] ?? ''))];
+        const clean = r => { for (const k in r) if (r[k] === null) r[k] = ''; return r; };
+        const downloadBlob = (blob, name) => {
+            const url = URL.createObjectURL(blob), a = document.createElement('a');
+            a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1500);
+        };
+        async function getSQL() {
+            if (SQLMod) return SQLMod;
+            if (typeof window.initSqlJs !== 'function') throw new Error('SQL engine files not found. Keep the "assets" folder next to index.html.');
+            // The .wasm is embedded as base64, so nothing is fetched (works when opened straight from disk, even offline).
+            const cfg = window.SQL_WASM_BASE64 ? { wasmBinary: fromB64(window.SQL_WASM_BASE64).buffer } : { locateFile: f => 'assets/js/' + f };
+            try { SQLMod = await window.initSqlJs(cfg); }
+            catch (e) { throw new Error('Could not start the SQL engine (' + (e.message || e) + '). Keep the "assets" folder next to index.html.'); }
+            window.SQL_WASM_BASE64 = null;
+            return SQLMod;
+        }
+        function createTables() {
+            for (const [t, cols] of Object.entries(SCHEMA)) {
+                const colSql = Object.entries(cols).map(([c, ty]) => `${c} ${ty}`).join(', ');
+                db.run(`CREATE TABLE IF NOT EXISTS ${t} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${colSql})`);
+                let info = rowsOf(`PRAGMA table_info(${t})`);
+                for (const [c, ty] of Object.entries(cols)) if (!info.some(r => r.name === c)) db.run(`ALTER TABLE ${t} ADD COLUMN ${c} ${ty}`);   // older/imported DBs
+                info = rowsOf(`PRAGMA table_info(${t})`);
+                if (info.some(r => cols[r.name] && String(r.type).toUpperCase() !== cols[r.name])) {      // e.g. old TEXT dueDay -> INTEGER: rebuild table, keep data
+                    const common = info.map(r => r.name).filter(n => n === 'id' || cols[n]).join(', ');
+                    tx(() => {
+                        db.run(`ALTER TABLE ${t} RENAME TO ${t}_old`);
+                        db.run(`CREATE TABLE ${t} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${colSql})`);
+                        db.run(`INSERT INTO ${t} (${common}) SELECT ${common} FROM ${t}_old`);
+                        db.run(`DROP TABLE ${t}_old`);
+                    });
+                }
+            }
+        }
+
+        function trackerApp() {
+            return {
+                tab: 'dashboard',
+                currencies: ['AED', 'INR', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'SAR', 'QAR'],
+                commitments: [], expenseLogs: [], eventsList: [],
+                selectedRowIds: [], viewIds: [],
+                toast: { show: false, message: '', type: 'success' },
+                editModal: { show: false, item: null, orig: null },
+                filters: { search: '', region: 'All', frequency: 'All', currency: 'All', sortBy: 'dueDate' },
+                loading: true, loadError: '', saveState: 'saved', isDesktop: true, clock: Date.now(),
+                _saveTimer: null, _toastTimer: null,
+                money: fmtMoney, monthNames: MONTH_NAMES,
+
+                /* ---------- boot ---------- */
+                async initDB() {
+                    if (window.matchMedia) {
+                        const mq = window.matchMedia('(min-width: 1024px)');
+                        this.isDesktop = mq.matches;
+                        mq.addEventListener('change', e => { this.isDesktop = e.matches; });
+                    }
+                    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.onResume(); });
+                    window.addEventListener('beforeunload', () => { if (this.saveState === 'dirty' && db) this.persist({ toast: false, refresh: false }); });
+                    this.$watch('filters', () => this.refreshView());
+                    try {
+                        const SQL = await getSQL();
+                        const b64 = store.get(LS_KEY), legacy = store.get(LS_LEGACY), raw = b64 || legacy;
+                        let opened = false;
+                        if (raw) {
+                            try {
+                                db = new SQL.Database(b64 ? fromB64(b64) : new Uint8Array(JSON.parse(legacy)));
+                                this.migrateTables();
+                                opened = true;
+                            } catch (e) {
+                                console.error('Saved database unreadable:', e);
+                                store.set('sqlite_db_corrupt_backup', raw);
+                                this.showToast('Saved data was unreadable. A backup copy was kept and a fresh database was started.', 'error');
+                                db = null;
+                            }
+                        }
+                        if (!opened) { db = new SQL.Database(); createTables(); }   // first run: start completely empty
+                        this.loadDataFromDB();
+                        this.rollover();
+                        const saved = this.persist({ toast: false, refresh: false });
+                        if (saved && !b64 && legacy) store.del(LS_LEGACY);
+                    } catch (e) {
+                        console.error(e);
+                        this.loadError = e.message || 'Failed to start the database.';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                migrateTables() {
+                    createTables();
+                    for (const [tbl, region, cur] of [['uae_payments', 'UAE', 'AED'], ['india_payments', 'India', 'INR']]) {
+                        try {
+                            if (!rowsOf(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tbl}'`).length) continue;
+                            tx(() => {
+                                rowsOf(`SELECT * FROM ${tbl}`).forEach(p => db.run(INS('commitments'), rowVals('commitments', {
+                                    name: p.name, region, category: p.category, amount: p.amount, currency: cur, frequency: p.frequency || 'Monthly',
+                                    dueDay: p.dueDay, dueDate: '', method: p.method, notes: p.notes, status: 'Pending', paidMonth: ''
+                                })));
+                                db.run(`DROP TABLE ${tbl}`);
+                            });
+                        } catch (e) { console.warn('Legacy migration skipped for ' + tbl + ':', e.message); }
+                    }
+                },
+
+                loadDataFromDB() {
+                    this.commitments = rowsOf('SELECT * FROM commitments ORDER BY id').map(clean).map(r => {
+                        const c = {
+                            ...r, amount: toMoney(r.amount), region: r.region || 'UAE', currency: r.currency || 'AED', frequency: r.frequency || 'Monthly',
+                            status: r.status || 'Pending', dueDay: toInt(r.dueDay) ?? '', dueMonth: toInt(r.dueMonth) ?? '', dueDate: String(r.dueDate ?? '')
+                        };
+                        if (c.frequency !== 'Monthly' && c.frequency !== 'One-Time' && c.dueMonth === '') {      // older versions stored "15-Nov" as text
+                            const p = parseDayMon(c.dueDate);
+                            if (p) { c.dueMonth = p.m + 1; c.dueDay = p.d; c.dueDate = ''; }
+                        }
+                        if (c.frequency === 'One-Time' && c.dueDate && !validISO(c.dueDate)) c.dueDate = '';
+                        return c;
+                    });
+                    this.expenseLogs = rowsOf('SELECT * FROM expense_logs ORDER BY date DESC, id DESC').map(clean).map(l => ({
+                        ...l, amount: toMoney(l.amount), region: l.region || 'UAE', currency: l.currency || 'AED'
+                    }));
+                    this.eventsList = rowsOf('SELECT * FROM events_list ORDER BY id').map(clean).map(r => {
+                        const e = { ...r, budget: toMoney(r.budget), currency: r.currency || 'AED', eventDay: toInt(r.eventDay) ?? '', eventMonth: toInt(r.eventMonth) ?? '' };
+                        if (e.eventMonth === '' && e.date) { const p = parseDayMon(e.date); if (p) { e.eventMonth = p.m + 1; e.eventDay = p.d; } }
+                        e.date = '';
+                        return e;
+                    });
+                    this.selectedRowIds = [];
+                    this.refreshView();
+                },
+
+                /* ---------- persistence ---------- */
+                saveBinary() {
+                    try { return store.set(LS_KEY, toB64(db.export())); } catch (e) { console.error(e); return false; }
+                },
+
+                persist(opts = {}) {
+                    const { toast = true, refresh = true } = opts;
+                    clearTimeout(this._saveTimer);
+                    if (!db) return false;
+                    try {
+                        tx(() => {
+                            ['commitments', 'expense_logs', 'events_list'].forEach(t => db.run(`DELETE FROM ${t}`));
+                            this.commitments.forEach(r => db.run(INS('commitments'), rowVals('commitments', r)));
+                            this.expenseLogs.forEach(r => db.run(INS('expense_logs'), rowVals('expense_logs', r)));
+                            this.eventsList.forEach(r => db.run(INS('events_list'), rowVals('events_list', r)));
+                        });
+                        if (!this.saveBinary()) {
+                            this.saveState = 'error';
+                            this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error');
+                            return false;
+                        }
+                        this.saveState = 'saved';
+                        if (refresh) this.refreshView();
+                        if (toast) this.showToast('Database synced and saved!');
+                        return true;
+                    } catch (e) {
+                        console.error(e);
+                        this.saveState = 'error';
+                        this.showToast('Save failed: ' + e.message, 'error');
+                        return false;
+                    }
+                },
+
+                touch() {
+                    this.saveState = 'dirty';
+                    clearTimeout(this._saveTimer);
+                    this._saveTimer = setTimeout(() => this.persist({ toast: false, refresh: false }), 800);
+                },
+                onEdit(e) { if (e.target.closest && e.target.closest('[data-nosave]')) return; this.touch(); },
+                get saveLabel() { return { saved: 'All changes saved', dirty: 'Unsaved changes…', error: 'Save failed – export a backup' }[this.saveState]; },
+
+                exportSQLite() {
+                    this.persist({ toast: false, refresh: false });
+                    downloadBlob(new Blob([db.export()], { type: 'application/x-sqlite3' }), 'gowtham_tracker_' + localISO() + '.db');
+                },
+
+                exportCSV() {
+                    const cell = v => {
+                        if (v === null || v === undefined) return '';
+                        let s = String(v);
+                        if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;       // neutralise spreadsheet formulas
+                        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+                    };
+                    const rows = [['Type', 'Date', 'Name / Item', 'Region', 'Category', 'Amount', 'Currency', 'Frequency', 'Due', 'Status', 'Method', 'Notes']];
+                    this.commitments.forEach(c => rows.push(['Commitment', '', c.name, c.region, c.category, c.amount, c.currency, c.frequency, this.getDueDateDisplay(c), c.status, c.method, c.notes]));
+                    this.expenseLogs.forEach(l => rows.push(['ExpenseLog', l.date, l.item, l.region, l.category, l.amount, l.currency, '', '', '', l.method, l.notes]));
+                    this.eventsList.forEach(e => rows.push(['Event', this.eventDateText(e), e.name, '', e.relation, e.budget, e.currency, '', '', '', '', e.notes]));
+                    const csv = '\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n');
+                    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'gowtham_export_' + localISO() + '.csv');
+                    this.showToast('CSV exported successfully!');
+                },
+
+                async importSQLite(event) {
+                    const input = event.target, file = input.files && input.files[0];
+                    if (!file) return;
+                    try {
+                        if (!confirm('Importing replaces ALL current data in this browser. Continue?')) return;
+                        const u8 = new Uint8Array(await file.arrayBuffer());
+                        const SQL = await getSQL();
+                        const candidate = new SQL.Database(u8), prev = db;
+                        try {
+                            const names = rowsOfIn(candidate, "SELECT name FROM sqlite_master WHERE type='table'");   // throws on invalid files
+                            if (!names.some(n => [...Object.keys(SCHEMA), 'uae_payments', 'india_payments'].includes(n)))
+                                throw new Error('this file is not a tracker database');
+                            db = candidate;
+                            this.migrateTables();
+                            this.loadDataFromDB();
+                            this.rollover();
+                            this.persist({ toast: false });
+                            if (prev) prev.close();
+                            this.showToast('SQLite database loaded!');
+                        } catch (err) {
+                            db = prev;
+                            try { candidate.close(); } catch (_) {}
+                            try { if (db) this.loadDataFromDB(); } catch (_) {}
+                            throw err;
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        this.showToast('Import failed: ' + (err.message || 'invalid file'), 'error');
+                    } finally {
+                        input.value = '';
+                    }
+                },
+
+                /* ---------- toast ---------- */
+                showToast(message, type = 'success') {
+                    this.toast = { show: true, message, type };
+                    clearTimeout(this._toastTimer);
+                    this._toastTimer = setTimeout(() => { this.toast.show = false; }, type === 'error' ? 5000 : 3000);
+                },
+
+                /* ---------- time ---------- */
+                nowDate() { this.clock; return new Date(); },
+                onResume() { this.clock = Date.now(); this.rollover(); this.refreshView(); },
+
+                // Recurring items that were paid in an earlier cycle go back to Pending.
+                rollover() {
+                    const cur = monthKey(this.nowDate());
+                    let n = 0;
+                    this.commitments.forEach(c => {
+                        if (c.status !== 'Paid' || c.frequency === 'One-Time') return;
+                        if (!c.paidMonth) { c.paidMonth = cur; n++; return; }
+                        if (monthsBetween(c.paidMonth, cur) >= (CYCLE[c.frequency] || 1)) { c.status = 'Pending'; c.paidMonth = ''; n++; }
+                    });
+                    if (n && db) this.persist({ toast: false, refresh: false });
+                    return n;
+                },
+
+                /* ---------- list view / filters ---------- */
+                refreshView() {
+                    const f = this.filters, q = (f.search || '').toLowerCase().trim();
+                    const list = this.commitments.filter(c =>
+                        (!q || [c.name, c.notes, c.category].map(x => x || '').join(' ').toLowerCase().includes(q)) &&
+                        (f.region === 'All' || c.region === f.region) &&
+                        (f.frequency === 'All' || c.frequency === f.frequency) &&
+                        (f.currency === 'All' || c.currency === f.currency));
+                    const by = f.sortBy;
+                    list.sort((a, b) => {
+                        if (by === 'amount') return (Number(b.amount) || 0) - (Number(a.amount) || 0);
+                        if (by === 'name') return (a.name || '').localeCompare(b.name || '');
+                        if (by === 'category') return (a.category || '').localeCompare(b.category || '');
+                        return this.dueSortKey(a) - this.dueSortKey(b) || (a.name || '').localeCompare(b.name || '');
+                    });
+                    this.viewIds = list.map(c => c.id);
+                },
+                // Order is frozen between refreshes so rows don't jump or vanish while being edited.
+                get filteredCommitments() {
+                    const map = new Map(this.commitments.map(c => [c.id, c]));
+                    return this.viewIds.map(id => map.get(id)).filter(Boolean);
+                },
+                dueSortKey(c) {
+                    const now = this.nowDate(), d = this.dueDayNum(c, now);
+                    return (this.isDueThisMonth(c, now) ? 0 : 100) + (d === null ? 99 : d);
+                },
+
+                /* ---------- selection ---------- */
+                get selectedItems() {
+                    const ids = new Set(this.selectedRowIds.map(Number));
+                    return this.filteredCommitments.filter(c => ids.has(Number(c.id)));
+                },
+                get allSelected() {
+                    const v = this.filteredCommitments;
+                    if (!v.length) return false;
+                    const s = new Set(this.selectedRowIds.map(Number));
+                    return v.every(c => s.has(Number(c.id)));
+                },
+                get selectedTotalsDisplay() {
+                    return this.fmtMap(this.sumBy(this.selectedItems)).replace(/\n/g, ' + ');
+                },
+                toggleSelectAll(e) {
+                    const ids = this.filteredCommitments.map(c => Number(c.id)), cur = this.selectedRowIds.map(Number);
+                    this.selectedRowIds = e.target.checked ? [...new Set([...cur, ...ids])] : cur.filter(id => !ids.includes(id));
+                },
+
+                /* ---------- paying ---------- */
+                newId(list) { return list.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0) + 1; },
+                payItem(item) {
+                    const now = this.nowDate();
+                    item.status = 'Paid';
+                    item.paidMonth = monthKey(now);
+                    this.expenseLogs.unshift({
+                        id: this.newId(this.expenseLogs), date: localISO(now), region: item.region || 'UAE', category: item.category || 'General',
+                        item: item.name || 'Payment', amount: Number(item.amount) || 0, currency: item.currency || 'AED',
+                        method: item.method || 'Auto', notes: item.notes || 'Auto-logged from Pay Module'
+                    });
+                },
+                markAsPaid(item) {
+                    if (item.status === 'Paid') { this.showToast(`"${item.name || 'Item'}" is already marked as paid.`, 'info'); return; }
+                    const errs = this.errList('c', item);
+                    if (errs.length) { this.showToast(`Fix "${item.name || 'this item'}" first: ${errs.join(', ')}`, 'error'); return; }
+                    this.payItem(item);
+                    if (this.persist({ toast: false })) this.showToast(`Logged "${item.name || 'Payment'}" as paid in Expense Log!`);
+                },
+                markAsPending(item) {
+                    item.status = 'Pending';
+                    item.paidMonth = '';
+                    if (this.persist({ toast: false })) this.showToast('Marked as pending. Remove its Expense Log row if it was logged by mistake.', 'info');
+                },
+                markSelectedAsPaid() {
+                    const unpaid = this.selectedItems.filter(i => i.status !== 'Paid');
+                    const todo = unpaid.filter(i => !this.errList('c', i).length);
+                    if (!todo.length) { this.showToast(unpaid.length ? 'Selected items have missing or invalid fields. Fix the red fields first.' : 'Selected items are already paid.', unpaid.length ? 'error' : 'info'); return; }
+                    todo.forEach(i => this.payItem(i));
+                    this.selectedRowIds = [];
+                    if (this.persist({ toast: false })) this.showToast(`Logged ${todo.length} payment(s) in Expense Log!` + (unpaid.length > todo.length ? ` ${unpaid.length - todo.length} skipped (invalid).` : ''));
+                },
+
+                /* ---------- due-date logic ---------- */
+                isDueThisMonth(c, now = this.nowDate()) {
+                    const mk = monthKey(now);
+                    if (c.frequency === 'Monthly') return true;
+                    if (c.frequency === 'One-Time') {
+                        if (!validISO(c.dueDate)) return true;
+                        return c.dueDate.startsWith(mk) || (c.dueDate < mk + '-01' && c.status !== 'Paid');
+                    }
+                    const m = toInt(c.dueMonth);
+                    if (!m) return false;
+                    if (c.frequency === 'Yearly') return m - 1 === now.getMonth();
+                    if (c.frequency === 'Bi-Monthly') return (((now.getMonth() - (m - 1)) % 2) + 2) % 2 === 0;
+                    return false;
+                },
+                dueDayNum(c, now = this.nowDate()) {
+                    let d = c.frequency === 'One-Time' ? (validISO(c.dueDate) ? +c.dueDate.slice(8) : null) : toInt(c.dueDay);
+                    if (d === null || d < 1 || d > 31) return null;
+                    return Math.min(d, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate());   // 31st in a 30-day month = last day
+                },
+                get dueThisMonthItems() { const n = this.nowDate(); return this.commitments.filter(c => this.isDueThisMonth(c, n)); },
+                get paidItems() { return this.dueThisMonthItems.filter(c => c.status === 'Paid'); },
+                get pendingItems() { return this.dueThisMonthItems.filter(c => c.status !== 'Paid'); },
+                get overdueItems() {
+                    const now = this.nowDate(), day = now.getDate(), today = localISO(now);
+                    return this.commitments.filter(c => {
+                        if (c.status === 'Paid') return false;
+                        if (c.frequency === 'One-Time') return isISO(c.dueDate) && c.dueDate < today;
+                        if (!this.isDueThisMonth(c, now)) return false;
+                        const d = this.dueDayNum(c, now);
+                        return d !== null && d < day;
+                    });
+                },
+                get overdueCount() { return this.overdueItems.length; },
+                isOverdue(c) { return this.overdueItems.some(o => o.id === c.id); },
+                statusLabel(c) { return c.status === 'Paid' ? 'Paid' : (this.isOverdue(c) ? 'Overdue' : 'Pending'); },
+                statusClass(c) {
+                    const s = this.statusLabel(c);
+                    return s === 'Paid' ? 'bg-emerald-500/10 text-emerald-400' : s === 'Overdue' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400';
+                },
+                getDueDateDisplay(i) {
+                    if (i.frequency === 'Monthly') return i.dueDay ? `Day ${i.dueDay}` : 'Monthly';
+                    if (i.frequency === 'One-Time') return i.dueDate || 'One-Time';
+                    return (i.dueDay && i.dueMonth) ? `${i.dueDay} ${MONTH_NAMES[i.dueMonth - 1]}` : i.frequency;
+                },
+                eventDateText(e) { return (e.eventDay && e.eventMonth) ? `${e.eventDay} ${MONTH_NAMES[e.eventMonth - 1]}` : ''; },
+                onFreqChange(i) {
+                    if (i.frequency === 'Monthly') { i.dueDate = ''; i.dueMonth = ''; if (toInt(i.dueDay) === null) i.dueDay = 1; return; }
+                    if (i.frequency === 'One-Time') { i.dueDay = ''; i.dueMonth = ''; if (!validISO(i.dueDate)) i.dueDate = ''; return; }
+                    i.dueDate = '';
+                    this.fixDay(i);
+                },
+                dayList(m) { return Array.from({ length: daysInMonth(toInt(m) || 0) }, (_, i) => i + 1); },
+                fixDay(o, mk = 'dueMonth', dk = 'dueDay') {          // e.g. 31 -> 28/29 when month switches to February
+                    const m = toInt(o[mk]), d = toInt(o[dk]);
+                    if (m && d && d > daysInMonth(m)) o[dk] = daysInMonth(m);
+                },
+
+                /* ---------- validation ---------- */
+                validate(kind, o) {
+                    const e = {}, num = Number(o.amount);
+                    const monthDay = (mk, dk) => {
+                        const m = toInt(o[mk]), d = toInt(o[dk]);
+                        if (m === null || m < 1 || m > 12) e[mk] = 'Select a month';
+                        if (d === null || d < 1 || d > (m ? daysInMonth(m) : 31)) e[dk] = 'Select a valid day for the month';
+                    };
+                    if (kind === 'c') {
+                        if (!String(o.name || '').trim()) e.name = 'Name is required';
+                        else if (String(o.name).length > 100) e.name = 'Name is too long (max 100)';
+                        if (o.amount === '' || o.amount === null || !Number.isFinite(num) || num <= 0) e.amount = 'Amount must be a number above 0';
+                        else if (num > 1e12) e.amount = 'Amount is too large';
+                        if (o.frequency === 'Monthly') { const d = toInt(o.dueDay); if (d === null || d < 1 || d > 31) e.dueDay = 'Select a due day (1-31)'; }
+                        else if (o.frequency === 'One-Time') { if (!validISO(o.dueDate)) e.dueDate = 'Select a valid due date'; }
+                        else monthDay('dueMonth', 'dueDay');
+                    } else if (kind === 'l') {
+                        if (!validISO(o.date)) e.date = 'Select a valid date';
+                        if (!String(o.item || '').trim()) e.item = 'Description is required';
+                        if (o.amount === '' || o.amount === null || !Number.isFinite(num) || num <= 0) e.amount = 'Amount must be a number above 0';
+                    } else if (kind === 'e') {
+                        if (!String(o.name || '').trim()) e.name = 'Name is required';
+                        monthDay('eventMonth', 'eventDay');
+                        if (o.budget !== '' && o.budget !== null && (!Number.isFinite(Number(o.budget)) || Number(o.budget) < 0)) e.budget = 'Budget must be 0 or more';
+                    }
+                    return e;
+                },
+                bad(kind, o, f) { return this.validate(kind, o)[f] ? '!border-red-500 ring-1 ring-red-500' : ''; },
+                errList(kind, o) { return Object.values(this.validate(kind, o)); },
+
+                /* ---------- money, grouped per currency (no cross-currency addition) ---------- */
+                sumBy(items, fn = i => i.amount) {
+                    const m = {};
+                    items.forEach(i => { const c = i.currency || 'AED'; m[c] = (m[c] || 0) + (Number(fn(i)) || 0); });
+                    return m;
+                },
+                fmtMap(map, signed = false) {
+                    const e = Object.entries(map || {});
+                    if (!e.length) return '—';
+                    return e.map(([c, v]) => (signed && v > 0.005 ? '+' : '') + fmtMoney(v, c)).join('\n');
+                },
+                logsFor(prefix) { return this.expenseLogs.filter(l => (l.date || '').startsWith(prefix)); },
+                get requiredThisMonth() { return this.sumBy(this.dueThisMonthItems); },
+                get paidThisMonth() { return this.sumBy(this.paidItems); },
+                get pendingThisMonth() { return this.sumBy(this.pendingItems); },
+                get currentMonthExpense() { return this.sumBy(this.logsFor(monthKey(this.nowDate()))); },
+                get prevMonthExpense() { return this.sumBy(this.logsFor(prevMonthKey(this.nowDate()))); },
+                get twoMonthDiff() {
+                    const a = this.currentMonthExpense, b = this.prevMonthExpense, out = {};
+                    new Set([...Object.keys(a), ...Object.keys(b)]).forEach(k => { out[k] = (a[k] || 0) - (b[k] || 0); });
+                    return out;
+                },
+                get diffIsUp() { return Object.values(this.twoMonthDiff).some(v => v > 0.005); },
+                get ytdExpense() { return this.sumBy(this.logsFor(this.nowDate().getFullYear() + '-')); },
+                get categoryBreakdown() {
+                    const map = {};
+                    this.logsFor(this.nowDate().getFullYear() + '-').forEach(l => {
+                        const cat = l.category || 'Uncategorized', cur = l.currency || 'AED';
+                        if (!map[cat]) map[cat] = {};
+                        map[cat][cur] = (map[cat][cur] || 0) + (Number(l.amount) || 0);
+                    });
+                    return Object.entries(map).map(([cat, totals]) => ({ cat, totals })).sort((a, b) => a.cat.localeCompare(b.cat));
+                },
+                get upcomingEvents() {
+                    const n = this.nowDate(), t0 = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+                    return this.eventsList.map(e => {
+                        const m = toInt(e.eventMonth), d = toInt(e.eventDay);
+                        if (!m || !d) return null;
+                        let dt = new Date(t0.getFullYear(), m - 1, d);
+                        if (dt < t0) dt = new Date(t0.getFullYear() + 1, m - 1, d);
+                        return { id: e.id, name: e.name || 'Untitled', date: this.eventDateText(e), budget: e.budget, currency: e.currency, days: Math.round((dt - t0) / 864e5) };
+                    }).filter(x => x && x.days <= 45).sort((a, b) => a.days - b.days);
+                },
+
+                /* ---------- CRUD ---------- */
+                addItem() {
+                    this.filters = { search: '', region: 'All', frequency: 'All', currency: 'All', sortBy: this.filters.sortBy };   // make sure the new row is visible
+                    const item = {
+                        id: this.newId(this.commitments), name: '', region: 'UAE', category: 'Utilities', amount: 0, currency: 'AED',
+                        frequency: 'Monthly', dueDay: 1, dueMonth: '', dueDate: '', method: 'Card', notes: '', status: 'Pending', paidMonth: ''
+                    };
+                    this.commitments.unshift(item);
+                    this.refreshView();
+                    this.touch();
+                    if (!this.isDesktop) this.openEditModal(item);
+                    else this.$nextTick(() => { const el = document.querySelector(`[data-row="${item.id}"] input[type=text]`); if (el) el.focus(); });
+                },
+                openEditModal(item) {
+                    this.editModal.orig = item;
+                    this.editModal.item = { ...item };      // edit a draft so Cancel really cancels
+                    this.editModal.show = true;
+                },
+                cancelEdit() { this.editModal.show = false; this.editModal.item = null; this.editModal.orig = null; },
+                saveEdit(markPaid = false) {
+                    const o = this.editModal.orig, d = this.editModal.item;
+                    if (!o || !d) return;
+                    const errs = this.errList('c', d);
+                    if (errs.length) { this.showToast('Please fix: ' + errs.join(', '), 'error'); return; }
+                    if (d.status === 'Paid' && !d.paidMonth) d.paidMonth = monthKey(this.nowDate());
+                    if (d.status !== 'Paid') d.paidMonth = '';
+                    Object.assign(o, d);
+                    this.cancelEdit();
+                    if (markPaid) this.markAsPaid(o); else this.persist();
+                },
+                deleteCommitment(item) {
+                    if (!confirm(`Delete "${item.name || 'this item'}"?`)) return;
+                    this.commitments = this.commitments.filter(c => c.id !== item.id);
+                    this.selectedRowIds = this.selectedRowIds.filter(id => Number(id) !== Number(item.id));
+                    this.persist();
+                },
+                addLogEntry() {
+                    this.expenseLogs.unshift({ id: this.newId(this.expenseLogs), date: localISO(), region: 'UAE', category: 'General', item: '', amount: 0, currency: 'AED', method: 'Card', notes: '' });
+                    this.touch();
+                },
+                deleteLog(log) {
+                    if (!confirm(`Delete log row "${log.item || 'untitled'}"?`)) return;
+                    this.expenseLogs = this.expenseLogs.filter(l => l.id !== log.id);
+                    this.persist();
+                },
+                addEvent() {
+                    this.eventsList.push({ id: this.newId(this.eventsList), name: '', relation: '', eventDay: '', eventMonth: '', budget: 0, currency: 'AED', notes: '' });
+                    this.touch();
+                },
+                clearAllData() {
+                    if (!confirm('Delete ALL commitments, expense logs and events? This cannot be undone.\n\nTip: use "Export DB" first if you want a backup.')) return;
+                    this.commitments = []; this.expenseLogs = []; this.eventsList = []; this.selectedRowIds = [];
+                    if (this.persist({ toast: false })) this.showToast('All data cleared.');
+                },
+                deleteEvent(ev) {
+                    if (!confirm(`Delete event "${ev.name || 'untitled'}"?`)) return;
+                    this.eventsList = this.eventsList.filter(e => e.id !== ev.id);
+                    this.persist();
+                }
+            }
+        }
+        function rowsOfIn(database, sql) {
+            const res = database.exec(sql);
+            return res.length ? res[0].values.map(r => r[0]) : [];
+        }
+    </script>
+</body>
+</html>
