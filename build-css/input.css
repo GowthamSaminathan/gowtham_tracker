@@ -1,3 +1,23 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Reusable UI parts - keeps index.html compact. Rebuild with: npm run build */
+@layer components {
+  .card  { @apply bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-2xl shadow-lg; }
+  .panel { @apply bg-slate-900/40 border border-slate-800/80 rounded-2xl; }
+  .inp   { @apply bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500 min-w-0 w-full; }
+  .btn   { @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap; }
+  .btn-sky   { @apply bg-sky-600 hover:bg-sky-500 text-white; }
+  .btn-em    { @apply bg-emerald-600 hover:bg-emerald-500 text-white; }
+  .btn-ghost { @apply bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700; }
+  .btn-red   { @apply bg-red-600/15 hover:bg-red-600/30 text-red-300 border border-red-500/30; }
+  .th    { @apply px-2 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 whitespace-nowrap text-left; }
+  .td    { @apply px-2 py-2 align-middle; }
+  .lbl   { @apply block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1; }
+  .badge { @apply text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap; }
+  .kpi   { @apply bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-2xl shadow-lg p-4; }
+  .kpi-l { @apply text-[11px] font-semibold text-slate-400 uppercase tracking-wider; }
+  .kpi-v { @apply text-xl font-black mt-1 whitespace-pre-line break-words; }
+  .rowno { @apply inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-lg bg-slate-800 text-[10px] font-bold text-slate-300 tabular-nums; }
+}

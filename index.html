@@ -5,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="color-scheme" content="dark">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
-    <title>Gowtham Schedules & Expense Tracker (Offline)</title>
-    <!-- All assets are local, so the app works with no internet connection -->
+    <title>Gowtham Schedules &amp; Expense Tracker v4 (Offline)</title>
+    <!-- Everything is local: the app works with no internet connection -->
     <link rel="stylesheet" href="assets/css/tailwind.css">
     <link rel="stylesheet" href="assets/css/fontawesome.min.css">
-    <script src="assets/js/alpine.min.js" defer></script>
     <script src="assets/js/sql-wasm.js"></script>
     <script src="assets/js/sql-wasm-binary.js"></script>
+    <script src="assets/js/chart.umd.js"></script>
+    <script src="assets/js/core.js"></script>
+    <script src="assets/js/app.js"></script>
+    <script src="assets/js/alpine.min.js" defer></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
@@ -20,127 +23,13 @@
         @media (min-width: 640px) { input, select, textarea { font-size: 0.875rem !important; } }
         html { color-scheme: dark; }
         #bottomNav { padding-bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px)); }
-        /* Tables become stacked cards on phones */
-        @media (max-width: 767px) {
-            table.rt thead { display: none; }
-            table.rt, table.rt tbody, table.rt tr, table.rt td { display: block; width: 100%; }
-            table.rt tr { padding: .5rem .25rem; }
-            table.rt td { padding: .25rem .5rem !important; }
-            table.rt td::before { content: attr(data-label); display: block; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; margin-bottom: 2px; }
-            table.rt td[data-label=""]::before { display: none; }
-            table.rt td input:not([type=checkbox]), table.rt td select { width: 100%; }
-        }
+        .contents { display: contents; }
+        details > summary { list-style: none; } details > summary::-webkit-details-marker { display: none; }
         @media (prefers-reduced-motion: reduce) { * { transition-duration: .01ms !important; } }
     </style>
 </head>
 <body class="min-h-full flex flex-col font-sans bg-slate-950 text-slate-100 antialiased selection:bg-sky-500 selection:text-white" x-data="trackerApp()" x-init="initDB()">
-
-    <!-- Toast Overlay -->
-    <div x-show="toast.show" role="status" aria-live="polite"
-         x-transition:enter="transition ease-out duration-300 transform"
-         x-transition:enter-start="opacity-0 translate-y-2"
-         x-transition:enter-end="opacity-100 translate-y-0"
-         x-transition:leave="transition ease-in duration-200 transform"
-         x-transition:leave-start="opacity-100 translate-y-0"
-         x-transition:leave-end="opacity-0 translate-y-2"
-         class="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:max-w-sm z-[60] bg-slate-800/95 backdrop-blur-md border border-slate-700 rounded-2xl p-4 shadow-2xl flex items-center gap-3 text-sm text-slate-100"
-         style="display: none;">
-        <div class="p-2 rounded-xl" :class="toast.type === 'error' ? 'bg-red-500/20 text-red-400' : toast.type === 'info' ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400'">
-            <i class="fa-solid text-lg" :class="toast.type === 'error' ? 'fa-circle-exclamation' : toast.type === 'info' ? 'fa-circle-info' : 'fa-circle-check'"></i>
-        </div>
-        <span x-text="toast.message" class="font-medium"></span>
-    </div>
-
-    <!-- Edit Modal for Mobile Row Selection -->
-    <div x-show="editModal.show" @click.self="cancelEdit()" @keydown.escape.window="editModal.show && cancelEdit()" role="dialog" aria-modal="true" aria-label="Edit commitment" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/80 backdrop-blur-sm p-0 sm:p-4" style="display: none;">
-        <div class="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                <h3 class="text-sm font-bold text-white flex items-center gap-2">
-                    <i class="fa-solid fa-pen-to-square text-sky-400"></i> Edit Commitment
-                </h3>
-                <button @click="cancelEdit()" aria-label="Close" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
-            </div>
-            <template x-if="editModal.item">
-                <div class="space-y-3 text-xs">
-                    <div>
-                        <label class="text-slate-400 block mb-1">Commitment / Item Name</label>
-                        <input type="text" x-model="editModal.item.name" :class="bad('c', editModal.item, 'name')" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="text-slate-400 block mb-1">Region</label>
-                            <select x-model="editModal.item.region" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                                <option value="UAE">UAE</option>
-                                <option value="India">India</option>
-                                <option value="Global">Global</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="text-slate-400 block mb-1">Category</label>
-                            <input type="text" x-model="editModal.item.category" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="text-slate-400 block mb-1">Amount</label>
-                            <input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="editModal.item.amount" :class="bad('c', editModal.item, 'amount')" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                        </div>
-                        <div>
-                            <label class="text-slate-400 block mb-1">Currency</label>
-                            <select x-model="editModal.item.currency" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                                <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === editModal.item.currency" x-text="curr"></option></template>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="text-slate-400 block mb-1">Frequency</label>
-                            <select x-model="editModal.item.frequency" @change="$nextTick(() => onFreqChange(editModal.item))" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                                <option value="Monthly">Monthly</option>
-                                <option value="Yearly">Yearly</option>
-                                <option value="One-Time">One-Time</option>
-                                <option value="Bi-Monthly">Bi-Monthly</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="text-slate-400 block mb-1">Due Date / Specification</label>
-                            <template x-if="editModal.item.frequency === 'Monthly'"><select x-model.number="editModal.item.dueDay" :class="bad('c', editModal.item, 'dueDay')" aria-label="Due day of month" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(editModal.item.dueDay)" x-text="d"></option></template></select></template>
-                            <template x-if="editModal.item.frequency === 'One-Time'"><input type="date" x-model="editModal.item.dueDate" :class="bad('c', editModal.item, 'dueDate')" aria-label="Due date" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"></template>
-                            <template x-if="editModal.item.frequency === 'Yearly' || editModal.item.frequency === 'Bi-Monthly'"><div class="flex gap-1" :title="editModal.item.frequency === 'Bi-Monthly' ? 'First due month; repeats every 2 months' : 'Due once a year'">
-                                <select x-model.number="editModal.item.dueMonth" @change="$nextTick(() => fixDay(editModal.item))" :class="bad('c', editModal.item, 'dueMonth')" aria-label="Due month" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"><option value="">Month</option><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === Number(editModal.item.dueMonth)" x-text="mn"></option></template></select>
-                                <select x-model.number="editModal.item.dueDay" :class="bad('c', editModal.item, 'dueDay')" aria-label="Due day" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"><option value="">Day</option><template x-for="d in dayList(editModal.item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(editModal.item.dueDay)" x-text="d"></option></template></select>
-                            </div></template>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="text-slate-400 block mb-1">Method</label>
-                            <input type="text" x-model="editModal.item.method" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                        </div>
-                        <div>
-                            <label class="text-slate-400 block mb-1">Status</label>
-                            <select x-model="editModal.item.status" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white">
-                                <option value="Pending">Pending</option>
-                                <option value="Paid">Paid</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <label class="text-slate-400 block mb-1">Notes</label>
-                        <textarea x-model="editModal.item.notes" rows="2" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 w-full text-white"></textarea>
-                    </div>
-                    <div class="flex gap-2 pt-2">
-                        <button @click="saveEdit(true)" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl font-bold flex items-center justify-center gap-1.5">
-                            <i class="fa-solid fa-check"></i> Mark as Paid
-                        </button>
-                        <button @click="saveEdit(false)" class="flex-1 bg-sky-600 hover:bg-sky-500 text-white py-2 rounded-xl font-bold">Save Changes</button>
-                    </div>
-                </div>
-            </template>
-        </div>
-    </div>
-
-    <!-- Header -->
+    <div class="contents">
     <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 shadow-lg">
         <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
             <div class="flex items-center space-x-3">
@@ -150,7 +39,7 @@
                 <div>
                     <h1 class="text-base font-bold tracking-tight text-white flex items-center gap-2">
                         Gowtham Schedules & Pay
-                        <span class="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">v3.2</span>
+                        <span class="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">v4.0</span>
                     </h1>
                     <p class="text-xs text-slate-400"><span class="hidden sm:inline">Unified SQLite Engine • </span><span :class="saveState === 'error' ? 'text-red-400' : saveState === 'dirty' ? 'text-amber-400' : 'text-emerald-400'" x-text="saveLabel"></span></p>
                 </div>
@@ -187,462 +76,473 @@
             </div>
         </div>
     </header>
+    <datalist id="catList"><template x-for="c in categoryOptions" :key="c"><option :value="c"></option></template></datalist>
+    <datalist id="methodList"><template x-for="c in methodOptions" :key="c"><option :value="c"></option></template></datalist>
 
-    <!-- Main Container -->
     <main @input="onEdit($event)" @change="onEdit($event)" class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 mb-20 md:mb-6 overflow-x-hidden">
 
         <p x-show="loading" class="text-center text-xs text-slate-400 py-6">Loading database…</p>
         <div x-show="loadError" style="display:none" class="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 mb-4 text-xs text-red-300 flex items-center justify-between gap-3">
             <span x-text="loadError"></span>
-            <button @click="location.reload()" class="bg-red-600 hover:bg-red-500 text-white font-bold px-3 py-1.5 rounded-xl shrink-0">Reload</button>
+            <button @click="location.reload()" class="btn bg-red-600 hover:bg-red-500 text-white">Reload</button>
         </div>
 
-        <!-- ================= DASHBOARD TAB ================= -->
-        <div x-show="tab === 'dashboard'" x-transition:enter="transition ease-out duration-200" class="space-y-6">
-            
-            <template x-if="!loading && !commitments.length && !expenseLogs.length && !eventsList.length">
+        <!-- ======================= DASHBOARD ======================= -->
+        <div x-show="tab === 'dashboard'" class="space-y-4">
+
+            <template x-if="migration">
+                <div class="bg-emerald-950/30 border border-emerald-700/50 rounded-2xl p-4 text-xs text-emerald-200 space-y-1.5" role="status">
+                    <div class="flex justify-between gap-3">
+                        <p class="font-bold text-sm"><i class="fa-solid fa-circle-check mr-1"></i> Database upgraded to schema v4</p>
+                        <button @click="migration = null" aria-label="Dismiss" class="text-emerald-300 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <p x-text="`${migration.counts.commitments} commitment(s), ${migration.counts.expenseLogs} expense log row(s) and ${migration.counts.events} event(s) were carried over. ${migration.linkedPayments} old “Paid” flag(s) became linked payments.`"></p>
+                    <p>Commitments start on the 1st of the month they were last paid or this month (recurring ones are open-ended); One-Time items use their old due date as start and end.</p>
+                    <template x-for="n in migration.notes" :key="n"><p class="text-amber-300" x-text="'⚠ ' + n"></p></template>
+                    <button x-show="migration.backupKept" @click="downloadPreUpgradeBackup()" class="btn btn-ghost mt-1"><i class="fa-solid fa-download"></i> Download pre-upgrade backup</button>
+                </div>
+            </template>
+
+            <template x-if="!loading && !commitments.length && !expenseLogs.length && !events.length">
                 <div class="bg-sky-950/40 border border-sky-800/60 rounded-2xl p-5 text-center space-y-3">
                     <p class="text-sm font-bold text-white">Welcome! Your tracker is empty.</p>
-                    <p class="text-xs text-slate-300">Add your first commitment to start tracking dues, or import an existing database from the header.</p>
-                    <button @click="tab = 'pay'; addItem()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-4 py-2 rounded-xl font-semibold"><i class="fa-solid fa-plus"></i> Add first commitment</button>
+                    <p class="text-xs text-slate-300">Add your first commitment, or import an existing database (older versions are upgraded automatically).</p>
+                    <button @click="tab = 'pay'; addRow('c')" class="btn btn-sky"><i class="fa-solid fa-plus"></i> Add first commitment</button>
                 </div>
             </template>
 
-            <!-- Payment Metrics Overview (per currency, this month's due items only) -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-lg">
-                    <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Required This Month</p>
-                    <p class="text-xl font-black text-sky-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(requiredThisMonth)"></p>
-                    <p class="text-[10px] text-slate-500 mt-1" x-text="dueThisMonthItems.length + ' commitment(s) due this month'"></p>
+            <!-- Time window -->
+            <div class="card p-4 space-y-3" data-nosave>
+                <div class="flex flex-wrap items-end gap-3">
+                    <div><label class="lbl" for="dMode">Time window</label>
+                        <select id="dMode" x-model="dash.mode" class="inp w-auto">
+                            <option value="this">This month</option><option value="next">Next month</option><option value="last">Last month</option>
+                            <option value="months">Selected month(s)</option><option value="year">Selected year</option>
+                        </select></div>
+                    <template x-if="dash.mode === 'months'">
+                        <div class="flex flex-wrap items-end gap-3">
+                            <div><span class="lbl">From</span><div class="flex gap-1">
+                                <select x-model.number="dash.fromM" aria-label="From month" class="inp w-auto"><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === dash.fromM" x-text="mn"></option></template></select>
+                                <select x-model.number="dash.fromY" aria-label="From year" class="inp w-auto"><template x-for="y in yearOptions" :key="y"><option :value="y" :selected="y === dash.fromY" x-text="y"></option></template></select></div></div>
+                            <div><span class="lbl">To</span><div class="flex gap-1">
+                                <select x-model.number="dash.toM" aria-label="To month" class="inp w-auto"><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === dash.toM" x-text="mn"></option></template></select>
+                                <select x-model.number="dash.toY" aria-label="To year" class="inp w-auto"><template x-for="y in yearOptions" :key="y"><option :value="y" :selected="y === dash.toY" x-text="y"></option></template></select></div></div>
+                        </div>
+                    </template>
+                    <template x-if="dash.mode === 'year'">
+                        <div><label class="lbl" for="dYear">Year</label>
+                            <select id="dYear" x-model.number="dash.year" class="inp w-auto"><template x-for="y in yearOptions" :key="y"><option :value="y" :selected="y === dash.year" x-text="y"></option></template></select></div>
+                    </template>
+                    <div><label class="lbl" for="dCur">Currency for charts</label>
+                        <select id="dCur" x-model="dashCur" class="inp w-auto"><template x-for="c in dashCurrencies" :key="c"><option :value="c" :selected="c === curSel" x-text="c"></option></template></select></div>
                 </div>
-                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-lg">
-                    <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Paid This Month</p>
-                    <p class="text-xl font-black text-emerald-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(paidThisMonth)"></p>
-                    <p class="text-[10px] text-slate-500 mt-1" x-text="paidItems.length + ' of ' + dueThisMonthItems.length + ' paid'"></p>
-                </div>
-                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 shadow-lg">
-                    <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Pending Dues</p>
-                    <p class="text-xl font-black text-amber-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(pendingThisMonth)"></p>
-                    <p class="text-[10px] text-amber-500/80 mt-1 font-medium" x-text="overdueCount + ' overdue item(s)'"></p>
-                </div>
+                <p x-show="win.error" class="text-xs text-red-400" x-text="win.error + ' Showing the current month instead.'"></p>
+                <p class="text-xs text-slate-400">Showing <b class="text-slate-200" x-text="win.label"></b> · compared with <span x-text="prevWin.label"></span></p>
             </div>
 
-            <!-- Spending Insights Grid (expense log, per currency) -->
+            <!-- KPIs (per currency, never added across currencies) -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
-                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Current Month Spend</p>
-                    <p class="text-base font-bold text-slate-100 mt-1 whitespace-pre-line break-words" x-text="fmtMap(currentMonthExpense)"></p>
+                <div class="kpi"><p class="kpi-l">Required (obligations)</p><p class="kpi-v text-sky-400" x-text="fmtMap(an.required)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.occ.length + ' due date(s) from active commitments'"></p></div>
+                <div class="kpi"><p class="kpi-l">Paid toward obligations</p><p class="kpi-v text-emerald-400" x-text="fmtMap(an.paid)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.paidCount + ' of ' + an.occ.length + ' paid'"></p></div>
+                <div class="kpi"><p class="kpi-l">Outstanding</p><p class="kpi-v text-amber-400" x-text="fmtMap(an.outstanding)"></p><p class="text-[10px] text-red-400 mt-1 whitespace-pre-line" x-show="an.overdueCount" x-text="an.overdueCount + ' overdue: ' + fmtMap(an.overdue).replace(/\n/g, ' + ')"></p></div>
+                <div class="kpi"><p class="kpi-l">Actual spend (Expense Log)</p><p class="kpi-v text-purple-400" x-text="fmtMap(an.actual)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.logCount + ' log row(s)' + (spendDelta ? ' · ' + spendDelta : '')"></p></div>
+            </div>
+
+            <!-- Charts -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div class="card p-4">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-column text-sky-400 mr-1"></i> Actual expenses vs upcoming obligations</h3>
+                    <p class="text-[10px] text-slate-500 mb-2" x-text="'Per month · ' + curSel"></p>
+                    <div class="relative h-64"><canvas id="chBar" role="img" aria-label="Bar chart of actual expenses versus obligations per month"></canvas></div>
                 </div>
-                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
-                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Prev Month Spend</p>
-                    <p class="text-base font-bold text-slate-300 mt-1 whitespace-pre-line break-words" x-text="fmtMap(prevMonthExpense)"></p>
-                </div>
-                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
-                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Change vs Prev Month</p>
-                    <p class="text-base font-bold mt-1 whitespace-pre-line break-words" :class="diffIsUp ? 'text-red-400' : 'text-emerald-400'" x-text="fmtMap(twoMonthDiff, true)"></p>
-                </div>
-                <div class="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
-                    <p class="text-[10px] text-slate-400 uppercase font-semibold">Year-To-Date (YTD) Spend</p>
-                    <p class="text-base font-bold text-purple-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(ytdExpense)"></p>
+                <div class="card p-4">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-line text-emerald-400 mr-1"></i> Spend trend vs previous period</h3>
+                    <p class="text-[10px] text-slate-500 mb-2" x-text="(win.months.length === 1 ? 'Cumulative daily spend · ' : 'Monthly spend · ') + curSel"></p>
+                    <div class="relative h-64"><canvas id="chTrend" role="img" aria-label="Line chart comparing spend with the previous period"></canvas></div>
                 </div>
             </div>
 
-            <!-- Urgent Overdue / Upcoming Alerts -->
-            <template x-if="overdueItems.length > 0">
-                <div class="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 space-y-3">
-                    <h3 class="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-2">
-                        <i class="fa-solid fa-triangle-exclamation"></i> Overdue Dues Require Attention (<span x-text="overdueItems.length"></span>)
-                    </h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <template x-for="item in overdueItems" :key="item.id">
-                            <div class="bg-slate-900/80 p-3 rounded-xl border border-red-900/50 flex justify-between items-center text-xs">
-                                <div>
-                                    <p class="font-bold text-white" x-text="item.name"></p>
-                                    <p class="text-[10px] text-slate-400" x-text="'Due: ' + getDueDateDisplay(item) + ' • ' + item.category"></p>
-                                </div>
-                                <div class="text-right">
-                                    <p class="font-black text-red-400" x-text="money(item.amount, item.currency)"></p>
-                                    <button @click="markAsPaid(item)" class="text-[10px] text-emerald-400 font-bold hover:underline mt-0.5">Mark Paid</button>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
+            <!-- Overdue -->
+            <template x-if="overdueList.length">
+                <div class="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-2">
+                    <h3 class="text-xs font-bold text-red-300 uppercase tracking-wider"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Overdue commitments</h3>
+                    <template x-for="o in overdueList" :key="o.c.id">
+                        <div class="flex items-center justify-between gap-3 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 text-xs">
+                            <div class="min-w-0"><p class="font-semibold text-white truncate" x-text="o.c.name"></p><p class="text-red-300/80" x-text="statusSub(o.c)"></p></div>
+                            <div class="text-right shrink-0"><p class="font-bold text-slate-100" x-text="money(o.c.amount, o.c.currency)"></p><button @click="markAsPaid(o.c)" class="text-[11px] text-emerald-400 hover:underline">Pay oldest</button></div>
+                        </div>
+                    </template>
                 </div>
             </template>
 
-            <!-- Upcoming Events -->
-            <template x-if="upcomingEvents.length > 0">
-                <div class="bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800 space-y-2">
-                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                        <i class="fa-solid fa-calendar-check text-amber-400"></i> Upcoming Events (next 45 days)
-                    </h3>
-                    <template x-for="ev in upcomingEvents" :key="ev.id">
+            <!-- Obligations in window -->
+            <div class="card p-4 space-y-2">
+                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-list-check text-sky-400 mr-1"></i> Due dates in this window</h3>
+                <p x-show="!an.occ.length" class="text-xs text-slate-500">No commitment has a due date inside this window (check each commitment's start / end dates).</p>
+                <div class="max-h-72 overflow-y-auto space-y-1">
+                    <template x-for="(o, i) in an.occ.slice(0, 100)" :key="o.id + '|' + o.date">
+                        <div class="flex items-center gap-2 text-xs bg-slate-950/50 rounded-xl px-2.5 py-1.5 border border-slate-800/70">
+                            <span class="rowno" x-text="i + 1"></span>
+                            <span class="text-slate-400 w-24 shrink-0" x-text="fmtDate(o.date)"></span>
+                            <span class="flex-1 truncate text-white" x-text="o.c.name"></span>
+                            <span class="text-slate-200 font-semibold" x-text="money(o.amount, o.currency)"></span>
+                            <span class="badge" :class="o.paid ? 'bg-emerald-500/10 text-emerald-400' : o.overdue ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'" x-text="o.paid ? 'Paid' : o.overdue ? 'Overdue' : 'Pending'"></span>
+                        </div>
+                    </template>
+                </div>
+                <p x-show="an.occ.length > 100" class="text-[10px] text-slate-500" x-text="'Showing the first 100 of ' + an.occ.length"></p>
+            </div>
+
+            <!-- Category spend -->
+            <div class="card p-4 space-y-2">
+                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-chart-bar text-sky-400 mr-1"></i> Historical spend by category (selected window)</h3>
+                <p x-show="!categoryRows.length" class="text-xs text-slate-500">Nothing logged in this window.</p>
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                    <template x-for="r in categoryRows" :key="r.cat"><div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80"><p class="text-[10px] text-slate-400 uppercase truncate" x-text="r.cat"></p><p class="text-sm font-bold text-sky-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(r.totals)"></p></div></template>
+                </div>
+            </div>
+
+            <!-- Upcoming events & tasks -->
+            <template x-if="upcomingEvents.length">
+                <div class="card p-4 space-y-2">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-calendar-check text-amber-400 mr-1"></i> Upcoming events &amp; open tasks (45 days)</h3>
+                    <template x-for="e in upcomingEvents" :key="e.id">
                         <div class="flex justify-between gap-3 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
-                            <span class="text-white font-medium" x-text="ev.name + ' • ' + ev.date"></span>
-                            <span class="text-slate-400 text-right" x-text="(ev.days === 0 ? 'Today' : 'in ' + ev.days + ' day(s)') + (ev.budget ? ' • ' + money(ev.budget, ev.currency) : '')"></span>
+                            <span class="text-white font-medium truncate"><span class="badge bg-slate-700/60 text-slate-300 mr-1" x-text="e.kind"></span><span x-text="e.title + ' · ' + fmtDate(e.date)"></span></span>
+                            <span class="text-right" :class="e.days < 0 ? 'text-red-400' : 'text-slate-400'" x-text="(e.days < 0 ? Math.abs(e.days) + ' day(s) overdue' : e.days === 0 ? 'Today' : 'in ' + e.days + ' day(s)') + (e.budget ? ' · ' + money(e.budget, e.currency) : '')"></span>
                         </div>
                     </template>
                 </div>
             </template>
 
-            <!-- Category Spending Breakdown -->
-            <div class="bg-slate-900/60 backdrop-blur-md p-5 rounded-2xl border border-slate-800 space-y-4">
-                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                    <i class="fa-solid fa-chart-bar text-sky-400"></i> Category Spending (Year-To-Date)
-                </h3>
-                <p x-show="!categoryBreakdown.length" class="text-xs text-slate-500">No expenses logged this year yet.</p>
-                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                    <template x-for="row in categoryBreakdown" :key="row.cat">
-                        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
-                            <p class="text-[10px] text-slate-400 uppercase font-medium truncate" x-text="row.cat"></p>
-                            <p class="text-sm font-bold text-sky-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(row.totals)"></p>
-                        </div>
-                    </template>
-                </div>
-            </div>
-
-            <div class="flex justify-end">
-                <button @click="clearAllData()" class="text-[11px] text-slate-500 hover:text-red-400 flex items-center gap-1.5"><i class="fa-solid fa-trash-can"></i> Clear all data</button>
-            </div>
-
+            <div class="flex justify-end"><button @click="clearAllData()" class="text-[11px] text-slate-500 hover:text-red-400 flex items-center gap-1.5"><i class="fa-solid fa-trash-can"></i> Clear all data</button></div>
         </div>
 
-        <!-- ================= PAY COMMITMENTS TAB ================= -->
-        <div x-show="tab === 'pay'" x-transition:enter="transition ease-out duration-200" class="space-y-4">
-            
-            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800">
-                <div>
-                    <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-credit-card text-sky-400"></i> Pay Commitments Module
-                    </h2>
-                    <p class="text-xs text-slate-400">Unified schedule for UAE, India & Global recurring dues</p>
-                </div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <button @click="addItem()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition shadow-md shadow-sky-600/20 flex items-center gap-1.5">
-                        <i class="fa-solid fa-plus"></i> Add Commitment
-                    </button>
-                    <button @click="persist()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition shadow-md shadow-emerald-600/20 flex items-center gap-1.5">
-                        <i class="fa-solid fa-floppy-disk"></i> Save DB
-                    </button>
-                </div>
+        <!-- ======================= PAY COMMITMENTS ======================= -->
+        <div x-show="tab === 'pay'" style="display:none" class="space-y-3">
+            <div class="card p-4 flex flex-wrap items-center justify-between gap-3">
+                <div><h2 class="text-sm font-bold text-white"><i class="fa-solid fa-credit-card text-sky-400 mr-1"></i> Pay Commitments</h2>
+                    <p class="text-xs text-slate-400">Each commitment is active between its start and end date; status is calculated from its due dates and the payments linked in the Expense Log.</p></div>
+                <div class="flex gap-2"><button @click="addRow('c')" class="btn btn-sky"><i class="fa-solid fa-plus"></i> Add Commitment</button><button @click="saveAll()" class="btn btn-em"><i class="fa-solid fa-floppy-disk"></i> Save DB</button></div>
             </div>
 
-            <!-- Filter & Search Control Toolbar -->
-            <div data-nosave class="bg-slate-900/40 p-3 rounded-2xl border border-slate-800/80 grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
-                <div class="col-span-2 sm:col-span-1">
-                    <input type="text" x-model="filters.search" placeholder="Search item, notes..." class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white placeholder-slate-500 focus:outline-none focus:border-sky-500">
-                </div>
-                <div>
-                    <select x-model="filters.region" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
-                        <option value="All">All Regions</option>
-                        <option value="UAE">UAE</option>
-                        <option value="India">India</option>
-                        <option value="Global">Global</option>
-                    </select>
-                </div>
-                <div>
-                    <select x-model="filters.frequency" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
-                        <option value="All">All Frequencies</option>
-                        <option value="Monthly">Monthly</option>
-                        <option value="Yearly">Yearly</option>
-                        <option value="One-Time">One-Time</option>
-                        <option value="Bi-Monthly">Bi-Monthly</option>
-                    </select>
-                </div>
-                <div>
-                    <select x-model="filters.currency" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
-                        <option value="All">All Currencies</option>
-                        <template x-for="curr in currencies" :key="curr"><option :value="curr" x-text="curr"></option></template>
-                    </select>
-                </div>
-                <div>
-                    <select x-model="filters.sortBy" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full text-white">
-                        <option value="dueDate">Sort: Due Day</option>
-                        <option value="amount">Sort: Amount</option>
-                        <option value="name">Sort: Name</option>
-                        <option value="category">Sort: Category</option>
-                    </select>
-                </div>
+            <div data-nosave class="panel p-3 grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
+                <input type="search" x-model="f.search" placeholder="Search name, notes…" aria-label="Search" class="inp col-span-2 sm:col-span-1">
+                <select x-model="f.region" aria-label="Region" class="inp"><option value="All">All regions</option><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === f.region" x-text="r"></option></template></select>
+                <select x-model="f.frequency" aria-label="Frequency" class="inp"><option value="All">All frequencies</option><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === f.frequency" x-text="r"></option></template></select>
+                <select x-model="f.currency" aria-label="Currency" class="inp"><option value="All">All currencies</option><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === f.currency" x-text="r"></option></template></select>
+                <select x-model="f.status" aria-label="Status" class="inp"><option value="All">All statuses</option><option>Overdue</option><option>Pending</option><option>Paid</option><option>Completed</option><option>Upcoming</option></select>
+                <select x-model="f.sortBy" aria-label="Sort" class="inp"><option value="due">Sort: next due</option><option value="name">Sort: name</option><option value="amount">Sort: amount</option><option value="category">Sort: category</option><option value="start">Sort: start date</option><option value="end">Sort: end date</option></select>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400" data-nosave>
+                <span x-text="cRows.length + ' row(s) · order is kept while you edit'"></span>
+                <button x-show="sortPending" @click="refreshView()" class="btn btn-ghost !py-1"><i class="fa-solid fa-arrow-down-wide-short"></i> Apply sort / filters</button>
             </div>
 
-            <!-- Multi-Select Live Dynamic Total Bar -->
             <template x-if="selectedItems.length > 0">
-                <div class="bg-sky-950/60 border border-sky-800/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs text-sky-200">
-                    <div class="flex items-center gap-2">
-                        <span class="font-bold bg-sky-500 text-slate-950 px-2 py-0.5 rounded-full text-[10px]" x-text="selectedItems.length + ' Selected'"></span>
-                        <span>Selected Total:</span>
-                        <span class="font-black text-white text-sm" x-text="selectedTotalsDisplay"></span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button @click="markSelectedAsPaid()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl transition">
-                            <i class="fa-solid fa-check"></i> Mark Selected as Paid
-                        </button>
-                        <button @click="selectedRowIds = []" class="text-slate-400 hover:text-white">Clear</button>
-                    </div>
+                <div class="bg-sky-950/40 border border-sky-800/50 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs" data-nosave>
+                    <span><b x-text="selectedItems.length + ' selected'"></b> · <span class="text-sky-300" x-text="selectedTotalsDisplay"></span></span>
+                    <span class="flex gap-2"><button @click="markSelectedAsPaid()" class="btn btn-em !py-1">Mark paid</button><button @click="selectedRowIds = []" class="btn btn-ghost !py-1">Clear</button></span>
                 </div>
             </template>
+            <p x-show="!cRows.length && !loading" class="text-center text-xs text-slate-500 py-8">No commitments match. Use “Add Commitment” to create one.</p>
 
-            <!-- Ultra-Dense Mobile View -->
-            <p x-show="!filteredCommitments.length" class="text-center text-xs text-slate-500 py-8">No commitments match your filters. Use “Add Commitment” to create one.</p>
-
+            <!-- Mobile / tablet: read-only cards -->
             <template x-if="!isDesktop"><div class="space-y-2">
-                <template x-for="item in filteredCommitments" :key="item.id">
-                    <div class="bg-slate-900/60 backdrop-blur-md rounded-2xl p-3 border border-slate-800 space-y-2 text-xs">
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="flex items-center gap-2.5">
-                                <input type="checkbox" :value="item.id" x-model.number="selectedRowIds" data-nosave class="rounded bg-slate-950 border-slate-700 text-sky-500 w-4 h-4">
-                                <div>
-                                    <span class="font-bold text-white text-xs" x-text="item.name || 'Unnamed Item'"></span>
-                                    <p x-show="errList('c', item).length" class="text-[10px] text-red-400" x-text="errList('c', item).join(' • ')"></p>
-                                    <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5">
-                                        <span class="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 font-mono" x-text="item.region"></span>
-                                        <span x-text="item.category"></span>
-                                        <span>•</span>
-                                        <span class="text-amber-400 font-medium" x-text="'Due: ' + getDueDateDisplay(item)"></span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="text-right">
-                                <span class="font-black text-sky-400 text-sm block" x-text="money(item.amount, item.currency)"></span>
-                                <span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium" :class="statusClass(item)" x-text="statusLabel(item)"></span>
-                            </div>
+                <template x-for="(item, i) in cRows" :key="item.id">
+                    <div class="card p-3 text-xs" :data-row="item.id" :class="flashId === item.id ? 'ring-2 ring-sky-400' : ''">
+                        <div class="flex items-start gap-2">
+                            <input type="checkbox" :value="item.id" x-model.number="selectedRowIds" data-nosave aria-label="Select" class="mt-1 rounded bg-slate-950 border-slate-700">
+                            <span class="rowno mt-0.5" x-text="i + 1"></span>
+                            <div class="flex-1 min-w-0"><p class="font-bold text-white text-sm truncate" x-text="item.name || 'Unnamed'"></p>
+                                <p class="text-slate-400 truncate" x-text="[item.category, item.region, item.method].filter(Boolean).join(' · ')"></p></div>
+                            <div class="text-right shrink-0"><p class="font-bold text-slate-100" x-text="money(item.amount, item.currency)"></p><span class="badge" :class="statusClass(item)" x-text="st(item).status"></span></div>
                         </div>
-
-                        <!-- Mobile Inline Notes with Truncation Toggle -->
-                        <template x-if="item.notes">
-                            <div class="bg-slate-950/60 p-2 rounded-xl border border-slate-800/60 text-[11px] text-slate-300 flex justify-between items-start gap-2">
-                                <p class="leading-tight" x-text="item.showFullNotes || item.notes.length <= 40 ? item.notes : item.notes.substring(0, 40) + '...'"></p>
-                                <template x-if="item.notes.length > 40">
-                                    <button @click="item.showFullNotes = !item.showFullNotes" class="text-sky-400 font-bold text-[10px] shrink-0" x-text="item.showFullNotes ? 'less' : 'more'"></button>
-                                </template>
-                            </div>
-                        </template>
-
-                        <!-- Mobile Row Action Bar -->
-                        <div class="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[11px]">
-                            <button @click="item.status === 'Paid' ? markAsPending(item) : markAsPaid(item)" class="text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1">
-                                <i class="fa-solid text-[10px]" :class="item.status === 'Paid' ? 'fa-rotate-left' : 'fa-check'"></i> <span x-text="item.status === 'Paid' ? 'Mark Pending' : 'Mark Paid'"></span>
-                            </button>
-                            <div class="flex items-center gap-3">
-                                <button @click="openEditModal(item)" class="text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1">
-                                    <i class="fa-solid fa-pen"></i> Edit
-                                </button>
-                                <button @click="deleteCommitment(item)" aria-label="Delete commitment" class="text-red-400 hover:text-red-300 font-semibold">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+                        <p class="text-slate-400 mt-2"><i class="fa-solid fa-calendar-days mr-1"></i><span x-text="scheduleText(item)"></span><span x-show="rangeText(item)"> · <span x-text="rangeText(item)"></span></span></p>
+                        <p class="text-[11px]" :class="st(item).status === 'Overdue' ? 'text-red-300' : 'text-slate-500'" x-text="statusSub(item)"></p>
+                        <p x-show="errList('c', item).length" class="text-[11px] text-red-400" x-text="errList('c', item).join(' • ')"></p>
+                        <div class="flex gap-2 mt-2 pt-2 border-t border-slate-800">
+                            <button @click="markAsPaid(item)" x-show="st(item).status !== 'Completed'" class="btn btn-em !py-1"><i class="fa-solid fa-check"></i> Mark paid</button>
+                            <button @click="markAsPending(item)" x-show="st(item).paidCount > 0" class="btn btn-ghost !py-1" aria-label="Undo last payment"><i class="fa-solid fa-rotate-left"></i></button>
+                            <button @click="openModal('c', item)" class="btn btn-ghost !py-1 ml-auto"><i class="fa-solid fa-pen"></i> Edit</button>
+                            <button @click="deleteRow('c', item)" class="btn btn-red !py-1" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>
                         </div>
                     </div>
                 </template>
             </div></template>
 
-            <!-- Desktop Excel-like Table View -->
-            <template x-if="isDesktop"><div class="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 overflow-x-auto shadow-lg">
-                <table class="w-full text-left text-xs text-slate-300">
-                    <thead class="bg-slate-950/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
-                        <tr>
-                            <th class="p-3 w-8 text-center"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected" data-nosave aria-label="Select all" class="rounded bg-slate-950 border-slate-700"></th>
-                            <th class="p-3">Commitment Item</th>
-                            <th class="p-3">Region</th>
-                            <th class="p-3">Category</th>
-                            <th class="p-3">Amount & Currency</th>
-                            <th class="p-3">Frequency</th>
-                            <th class="p-3">Due Specification</th>
-                            <th class="p-3">Method</th>
-                            <th class="p-3">Notes</th>
-                            <th class="p-3">Status</th>
-                            <th class="p-3 text-center">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-800/60">
-                        <template x-for="item in filteredCommitments" :key="item.id">
-                            <tr class="hover:bg-slate-800/30 transition" :data-row="item.id">
-                                <td class="p-2.5 text-center">
-                                    <input type="checkbox" :value="item.id" x-model.number="selectedRowIds" data-nosave class="rounded bg-slate-950 border-slate-700 text-sky-500">
+            <!-- Desktop: inline-editable table -->
+            <template x-if="isDesktop"><div class="card overflow-x-auto">
+                <table class="w-full text-xs min-w-[1250px]">
+                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr>
+                        <th class="th">#</th><th class="th"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected" data-nosave aria-label="Select all" class="rounded bg-slate-950 border-slate-700"></th>
+                        <th class="th">Commitment</th><th class="th">Region</th><th class="th">Category</th><th class="th">Amount</th><th class="th">Frequency</th><th class="th">Due</th>
+                        <th class="th">Start date</th><th class="th">End / due date</th><th class="th">Status</th><th class="th text-center">Actions</th></tr></thead>
+                    <tbody class="divide-y divide-slate-800/70">
+                        <template x-for="(item, i) in cRows" :key="item.id">
+                            <tr :data-row="item.id" class="hover:bg-slate-800/30" :class="[item._draft ? 'bg-sky-950/30' : '', flashId === item.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
+                                <td class="td"><span class="rowno" x-text="i + 1"></span></td>
+                                <td class="td"><input type="checkbox" :value="item.id" x-model.number="selectedRowIds" data-nosave aria-label="Select row" class="rounded bg-slate-950 border-slate-700"></td>
+                                <td class="td min-w-[150px]"><input type="text" x-model="item.name" :class="bad('c', item, 'name')" placeholder="Name" aria-label="Name" class="inp"></td>
+                                <td class="td"><select x-model="item.region" aria-label="Region" class="inp w-20"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === item.region" x-text="r"></option></template></select></td>
+                                <td class="td"><input type="text" list="catList" x-model="item.category" aria-label="Category" class="inp w-28"></td>
+                                <td class="td"><div class="flex gap-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="item.amount" :class="bad('c', item, 'amount')" aria-label="Amount" class="inp w-24">
+                                    <select x-model="item.currency" aria-label="Currency" class="inp w-[4.5rem]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === item.currency" x-text="r"></option></template></select></div></td>
+                                <td class="td"><select x-model="item.frequency" @change="$nextTick(() => onFreqChange(item))" :class="bad('c', item, 'frequency')" aria-label="Frequency" class="inp w-28"><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === item.frequency" x-text="r"></option></template></select></td>
+                                <td class="td">
+                                    <template x-if="item.frequency === 'Monthly'"><select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="inp w-20"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></template>
+                                    <template x-if="item.frequency === 'Yearly' || item.frequency === 'Bi-Monthly'"><div class="flex gap-1" :title="item.frequency === 'Bi-Monthly' ? 'First due month; repeats every 2 months' : 'Due once a year'">
+                                        <select x-model.number="item.dueMonth" @change="$nextTick(() => fixDay(item))" :class="bad('c', item, 'dueMonth')" aria-label="Due month" class="inp w-[4.5rem]"><option value="">Month</option><template x-for="(mn, k) in monthNames" :key="mn"><option :value="k + 1" :selected="k + 1 === Number(item.dueMonth)" x-text="mn"></option></template></select>
+                                        <select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="inp w-16"><option value="">Day</option><template x-for="d in dayList(item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></div></template>
+                                    <span x-show="item.frequency === 'One-Time'" class="text-slate-500">on end date →</span>
                                 </td>
-                                <td class="p-2.5"><input type="text" x-model="item.name" :class="bad('c', item, 'name')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none focus:border-sky-500"></td>
-                                <td class="p-2.5">
-                                    <select x-model="item.region" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
-                                        <option value="UAE">UAE</option>
-                                        <option value="India">India</option>
-                                        <option value="Global">Global</option>
-                                    </select>
-                                </td>
-                                <td class="p-2.5"><input type="text" x-model="item.category" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none focus:border-sky-500"></td>
-                                <td class="p-2.5 flex items-center gap-1">
-                                    <input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="item.amount" :class="bad('c', item, 'amount')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 w-20 text-xs text-white focus:outline-none">
-                                    <select x-model="item.currency" class="bg-slate-950 border border-slate-700/80 rounded-xl px-1.5 py-1.5 text-xs text-white">
-                                        <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === item.currency" x-text="curr"></option></template>
-                                    </select>
-                                </td>
-                                <td class="p-2.5">
-                                    <select x-model="item.frequency" @change="$nextTick(() => onFreqChange(item))" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
-                                        <option value="Monthly">Monthly</option>
-                                        <option value="Yearly">Yearly</option>
-                                        <option value="One-Time">One-Time</option>
-                                        <option value="Bi-Monthly">Bi-Monthly</option>
-                                    </select>
-                                </td>
-                                <td class="p-2.5">
-                                    <template x-if="item.frequency === 'Monthly'"><select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day of month" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></template>
-                            <template x-if="item.frequency === 'One-Time'"><input type="date" x-model="item.dueDate" :class="bad('c', item, 'dueDate')" aria-label="Due date" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"></template>
-                            <template x-if="item.frequency === 'Yearly' || item.frequency === 'Bi-Monthly'"><div class="flex gap-1" :title="item.frequency === 'Bi-Monthly' ? 'First due month; repeats every 2 months' : 'Due once a year'">
-                                <select x-model.number="item.dueMonth" @change="$nextTick(() => fixDay(item))" :class="bad('c', item, 'dueMonth')" aria-label="Due month" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Month</option><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === Number(item.dueMonth)" x-text="mn"></option></template></select>
-                                <select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Day</option><template x-for="d in dayList(item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select>
-                            </div></template>
-                                </td>
-                                <td class="p-2.5"><input type="text" x-model="item.method" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none"></td>
-                                <td class="p-2.5"><input type="text" x-model="item.notes" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white focus:outline-none"></td>
-                                <td class="p-2.5"><span class="text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap" :class="statusClass(item)" x-text="statusLabel(item)"></span>
-                                    <span x-show="errList('c', item).length" :title="errList('c', item).join(', ')" class="text-red-400 ml-1"><i class="fa-solid fa-triangle-exclamation"></i></span></td>
-                                <td class="p-2.5 text-center">
-                                    <div class="flex items-center justify-center gap-1">
-                                        <button @click="item.status === 'Paid' ? markAsPending(item) : markAsPaid(item)" :title="item.status === 'Paid' ? 'Mark as Pending' : 'Mark as Paid'" :aria-label="item.status === 'Paid' ? 'Mark as Pending' : 'Mark as Paid'" class="text-emerald-400 hover:text-emerald-300 p-1.5 rounded-lg">
-                                            <i class="fa-solid text-sm" :class="item.status === 'Paid' ? 'fa-rotate-left' : 'fa-circle-check'"></i>
-                                        </button>
-                                        <button @click="deleteCommitment(item)" title="Delete" aria-label="Delete commitment" class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg">
-                                            <i class="fa-solid fa-trash-can text-sm"></i>
-                                        </button>
-                                    </div>
+                                <td class="td"><input type="date" x-model="item.startDate" :class="bad('c', item, 'startDate')" aria-label="Start date" class="inp w-36"></td>
+                                <td class="td"><input type="date" x-model="item.endDate" :class="bad('c', item, 'endDate')" :aria-label="item.frequency === 'One-Time' ? 'Due date' : 'End date (optional)'" :title="item.frequency === 'One-Time' ? 'Due date' : 'End date - leave empty for ongoing'" class="inp w-36"></td>
+                                <td class="td whitespace-nowrap"><span class="badge" :class="statusClass(item)" x-text="st(item).status"></span>
+                                    <span x-show="errList('c', item).length" :title="errList('c', item).join(', ')" class="text-red-400 ml-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                    <p class="text-[10px] text-slate-500 mt-0.5" x-text="statusSub(item)"></p></td>
+                                <td class="td whitespace-nowrap text-center">
+                                    <template x-if="item._draft"><span><button @click="saveRow('c', item)" class="btn btn-sky !py-1" title="Save this row"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('c', item)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
+                                    <template x-if="!item._draft"><span>
+                                        <button @click="markAsPaid(item)" x-show="st(item).status !== 'Completed'" title="Mark next due date as paid" aria-label="Mark paid" class="text-emerald-400 hover:text-emerald-300 p-1.5"><i class="fa-solid fa-circle-check"></i></button>
+                                        <button @click="markAsPending(item)" x-show="st(item).paidCount > 0" title="Undo last payment" aria-label="Undo last payment" class="text-slate-400 hover:text-white p-1.5"><i class="fa-solid fa-rotate-left"></i></button>
+                                        <button @click="openModal('c', item)" title="Edit (notes, method…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1.5"><i class="fa-solid fa-pen"></i></button>
+                                        <button @click="deleteRow('c', item)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template>
                                 </td>
                             </tr>
                         </template>
                     </tbody>
-                </table>
+                </table></div></template>
+        </div>
+
+        <!-- ======================= EXPENSE LOG ======================= -->
+        <div x-show="tab === 'log'" style="display:none" class="space-y-3">
+            <div class="card p-4 flex flex-wrap items-center justify-between gap-3">
+                <div><h2 class="text-sm font-bold text-white"><i class="fa-solid fa-receipt text-sky-400 mr-1"></i> Expense Log</h2>
+                    <p class="text-xs text-slate-400"><b>Actual date</b> = when it was spent · <b>Commitment date</b> = the planned due date it settles (linked payments count toward commitment status).</p></div>
+                <div class="flex gap-2"><button @click="addRow('l')" class="btn btn-sky"><i class="fa-solid fa-plus"></i> Add Log Row</button><button @click="saveAll()" class="btn btn-em"><i class="fa-solid fa-floppy-disk"></i> Save DB</button></div>
+            </div>
+
+            <details data-nosave :open="isDesktop" class="panel p-3 text-xs">
+                <summary class="cursor-pointer font-semibold text-slate-200"><i class="fa-solid fa-filter mr-1 text-sky-400"></i> Filters &amp; sorting <span class="badge bg-sky-500/15 text-sky-300 ml-1" x-show="activeLogFilters" x-text="activeLogFilters + ' active'"></span></summary>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                    <div class="col-span-2"><label class="lbl" for="lq">Search</label><input id="lq" type="search" x-model="lf.q" placeholder="Description, notes, category" class="inp"></div>
+                    <div><label class="lbl">Actual date from</label><input type="date" x-model="lf.actualFrom" class="inp"></div>
+                    <div><label class="lbl">Actual date to</label><input type="date" x-model="lf.actualTo" class="inp"></div>
+                    <div><label class="lbl">Commitment date from</label><input type="date" x-model="lf.commitFrom" class="inp"></div>
+                    <div><label class="lbl">Commitment date to</label><input type="date" x-model="lf.commitTo" class="inp"></div>
+                    <div><label class="lbl">Category</label><select x-model="lf.category" class="inp"><option value="All">All</option><template x-for="o in logOptions.category" :key="o"><option :value="o" :selected="o === lf.category" x-text="o"></option></template></select></div>
+                    <div><label class="lbl">Region</label><select x-model="lf.region" class="inp"><option value="All">All</option><template x-for="o in logOptions.region" :key="o"><option :value="o" :selected="o === lf.region" x-text="o"></option></template></select></div>
+                    <div><label class="lbl">Currency</label><select x-model="lf.currency" class="inp"><option value="All">All</option><template x-for="o in logOptions.currency" :key="o"><option :value="o" :selected="o === lf.currency" x-text="o"></option></template></select></div>
+                    <div><label class="lbl">Method</label><select x-model="lf.method" class="inp"><option value="All">All</option><template x-for="o in logOptions.method" :key="o"><option :value="o" :selected="o === lf.method" x-text="o"></option></template></select></div>
+                    <div><label class="lbl">Commitment link</label><select x-model="lf.link" class="inp"><option value="any">Any</option><option value="linked">Linked to a commitment</option><option value="unlinked">Not linked</option></select></div>
+                    <div><label class="lbl">Min amount</label><input type="number" min="0" step="0.01" x-model="lf.minAmt" class="inp"></div>
+                    <div><label class="lbl">Max amount</label><input type="number" min="0" step="0.01" x-model="lf.maxAmt" class="inp"></div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+                    <template x-for="(s, i) in ls" :key="i">
+                        <div><label class="lbl" x-text="'Sort level ' + (i + 1)"></label>
+                            <div class="flex gap-1"><select x-model="s.col" class="inp"><option value="">(none)</option><template x-for="c in sortCols" :key="c[0]"><option :value="c[0]" :selected="c[0] === s.col" x-text="c[1]"></option></template></select>
+                                <select x-model="s.dir" aria-label="Direction" class="inp w-24"><option value="asc">A → Z / old → new</option><option value="desc">Z → A / new → old</option></select></div></div>
+                    </template>
+                </div>
+                <div class="flex justify-end mt-3"><button @click="resetLogFilters()" class="btn btn-ghost !py-1"><i class="fa-solid fa-rotate-left"></i> Reset filters</button></div>
+            </details>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400" data-nosave>
+                <span><b class="text-slate-200" x-text="lView.total"></b> matching row(s) · totals: <span class="text-sky-300" x-text="lView.totals.map(t => money(t.total, t.currency)).join(' + ') || '—'"></span></span>
+                <span class="flex items-center gap-2">
+                    <button x-show="lStale" @click="runLogQuery()" class="btn btn-ghost !py-1"><i class="fa-solid fa-arrow-down-wide-short"></i> Re-apply filters / sort</button>
+                    <select x-model.number="lPageSize" aria-label="Rows per page" class="inp !w-auto"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
+                    <button @click="lPage = Math.max(0, lPage - 1)" :disabled="lPage === 0" class="btn btn-ghost !py-1 disabled:opacity-40" aria-label="Previous page"><i class="fa-solid fa-chevron-left"></i></button>
+                    <span x-text="(lPage + 1) + ' / ' + lPages"></span>
+                    <button @click="lPage = Math.min(lPages - 1, lPage + 1)" :disabled="lPage >= lPages - 1" class="btn btn-ghost !py-1 disabled:opacity-40" aria-label="Next page"><i class="fa-solid fa-chevron-right"></i></button>
+                </span>
+            </div>
+            <p x-show="!lRows.length" class="text-center text-xs text-slate-500 py-8">No expense rows match. Mark a commitment as paid, or add a row.</p>
+
+            <!-- Mobile / tablet: READ-ONLY cards (tap Edit to change) -->
+            <template x-if="!isDesktop"><div class="space-y-2">
+                <template x-for="(l, i) in lRows" :key="l.id">
+                    <div class="card p-3 text-xs" :data-row="l.id" :class="flashId === l.id ? 'ring-2 ring-sky-400' : ''">
+                        <div class="flex items-start gap-2">
+                            <span class="rowno mt-0.5" x-text="lNo(i)"></span>
+                            <div class="flex-1 min-w-0"><p class="font-bold text-white text-sm truncate" x-text="l.item || 'Untitled'"></p>
+                                <p class="text-slate-400 truncate" x-text="[l.category, l.region, l.method].filter(Boolean).join(' · ')"></p></div>
+                            <p class="font-bold text-slate-100 shrink-0" x-text="money(l.amount, l.currency)"></p>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-2 text-[11px]">
+                            <div><p class="lbl !mb-0">Actual date</p><p class="text-slate-200" x-text="fmtDate(l.actualDate)"></p></div>
+                            <div><p class="lbl !mb-0">Commitment date</p><p class="text-slate-200" x-text="l.commitmentDate ? fmtDate(l.commitmentDate) : '—'"></p></div>
+                        </div>
+                        <p x-show="l.commitmentId" class="mt-1 text-[11px] text-emerald-300"><i class="fa-solid fa-link mr-1"></i><span x-text="commitmentName(l.commitmentId) || 'Linked commitment'"></span></p>
+                        <p x-show="l.notes" class="mt-1 text-[11px] text-slate-500 truncate" x-text="l.notes"></p>
+                        <div class="flex gap-2 mt-2 pt-2 border-t border-slate-800"><button @click="openModal('l', l)" class="btn btn-ghost !py-1 ml-auto"><i class="fa-solid fa-pen"></i> Edit</button><button @click="deleteRow('l', l)" class="btn btn-red !py-1" aria-label="Delete"><i class="fa-solid fa-trash"></i></button></div>
+                    </div>
+                </template>
             </div></template>
-        </div>
 
-        <!-- ================= EXPENSE LOG TAB ================= -->
-        <div x-show="tab === 'log'" x-transition:enter="transition ease-out duration-200" class="space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800">
-                <div>
-                    <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-receipt text-sky-400"></i> Monthly Actual Expense Log
-                    </h2>
-                    <p class="text-xs text-slate-400">Automated ledger synced from payments & custom entries</p>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button @click="addLogEntry()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-plus"></i> Add Log Row
-                    </button>
-                    <button @click="persist()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-floppy-disk"></i> Save DB
-                    </button>
-                </div>
-            </div>
-
-            <!-- Expense Table -->
-            <div class="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 overflow-x-auto shadow-lg">
-                <table class="w-full text-left text-xs text-slate-300 rt md:min-w-[700px]">
-                    <thead class="bg-slate-950/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
-                        <tr>
-                            <th class="p-3">Date</th>
-                            <th class="p-3">Region</th>
-                            <th class="p-3">Category</th>
-                            <th class="p-3">Item / Description</th>
-                            <th class="p-3">Amount</th>
-                            <th class="p-3">Currency</th>
-                            <th class="p-3">Method</th>
-                            <th class="p-3">Notes</th>
-                            <th class="p-3 text-center">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-800/60">
-                        <template x-for="log in expenseLogs" :key="log.id">
-                            <tr class="hover:bg-slate-800/30 transition">
-                                <td data-label="Date" class="p-2.5"><input type="date" x-model="log.date" :class="bad('l', log, 'date')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"></td>
-                                <td data-label="Region" class="p-2.5">
-                                    <select x-model="log.region" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
-                                        <option value="UAE">UAE</option>
-                                        <option value="India">India</option>
-                                        <option value="Global">Global</option>
-                                    </select>
-                                </td>
-                                <td data-label="Category" class="p-2.5"><input type="text" x-model="log.category" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
-                                <td data-label="Item / Description" class="p-2.5"><input type="text" x-model="log.item" :class="bad('l', log, 'item')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
-                                <td data-label="Amount" class="p-2.5"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="log.amount" :class="bad('l', log, 'amount')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-24 text-xs text-white"></td>
-                                <td data-label="Currency" class="p-2.5">
-                                    <select x-model="log.currency" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
-                                        <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === log.currency" x-text="curr"></option></template>
-                                    </select>
-                                </td>
-                                <td data-label="Method" class="p-2.5"><input type="text" x-model="log.method" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
-                                <td data-label="Notes" class="p-2.5"><input type="text" x-model="log.notes" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
-                                <td data-label="" class="p-2.5 text-center">
-                                    <span x-show="errList('l', log).length" :title="errList('l', log).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
-                                    <button @click="deleteLog(log)" aria-label="Delete log row" class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg"><i class="fa-solid fa-trash-can text-sm"></i></button>
+            <!-- Desktop: inline-editable table -->
+            <template x-if="isDesktop"><div class="card overflow-x-auto">
+                <table class="w-full text-xs min-w-[1150px]">
+                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th">#</th><th class="th">Actual date</th><th class="th">Commitment date</th><th class="th">Linked commitment</th><th class="th">Description</th><th class="th">Category</th><th class="th">Region</th><th class="th">Amount</th><th class="th">Method</th><th class="th text-center">Actions</th></tr></thead>
+                    <tbody class="divide-y divide-slate-800/70">
+                        <template x-for="(l, i) in lRows" :key="l.id">
+                            <tr :data-row="l.id" class="hover:bg-slate-800/30" :class="[l._draft ? 'bg-sky-950/30' : '', flashId === l.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
+                                <td class="td"><span class="rowno" x-text="lNo(i)"></span></td>
+                                <td class="td"><input type="date" x-model="l.actualDate" :class="bad('l', l, 'actualDate')" aria-label="Actual date" class="inp w-36"></td>
+                                <td class="td"><input type="date" x-model="l.commitmentDate" :class="bad('l', l, 'commitmentDate')" aria-label="Commitment date" class="inp w-36"></td>
+                                <td class="td"><select x-model.number="l.commitmentId" @change="$nextTick(() => onLinkChange(l))" :class="bad('l', l, 'commitmentId')" aria-label="Linked commitment" class="inp w-40"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(l.commitmentId)" x-text="c.name"></option></template></select></td>
+                                <td class="td min-w-[150px]"><input type="text" x-model="l.item" :class="bad('l', l, 'item')" aria-label="Description" class="inp"></td>
+                                <td class="td"><input type="text" list="catList" x-model="l.category" aria-label="Category" class="inp w-28"></td>
+                                <td class="td"><select x-model="l.region" aria-label="Region" class="inp w-20"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === l.region" x-text="r"></option></template></select></td>
+                                <td class="td"><div class="flex gap-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="l.amount" :class="bad('l', l, 'amount')" aria-label="Amount" class="inp w-24">
+                                    <select x-model="l.currency" aria-label="Currency" class="inp w-[4.5rem]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === l.currency" x-text="r"></option></template></select></div></td>
+                                <td class="td"><input type="text" list="methodList" x-model="l.method" aria-label="Method" class="inp w-28"></td>
+                                <td class="td whitespace-nowrap text-center">
+                                    <span x-show="errList('l', l).length" :title="errList('l', l).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                    <template x-if="l._draft"><span><button @click="saveRow('l', l)" class="btn btn-sky !py-1"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('l', l)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
+                                    <template x-if="!l._draft"><span><button @click="openModal('l', l)" title="Edit (notes…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1.5"><i class="fa-solid fa-pen"></i></button><button @click="deleteRow('l', l)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template>
                                 </td>
                             </tr>
                         </template>
                     </tbody>
-                </table>
-                <p x-show="!expenseLogs.length" class="text-center text-xs text-slate-500 py-8">No expenses logged yet. Mark a commitment as paid, or add a row.</p>
-            </div>
+                </table></div></template>
         </div>
 
-        <!-- ================= EVENTS & TASKS TAB ================= -->
-        <div x-show="tab === 'events'" x-transition:enter="transition ease-out duration-200" class="space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-800">
-                <div>
-                    <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-calendar-check text-amber-400"></i> Events & Milestones
-                    </h2>
-                    <p class="text-xs text-slate-400">Birthdays, anniversaries, and planned budgets</p>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button @click="addEvent()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-plus"></i> Add Event
-                    </button>
-                    <button @click="persist()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3.5 py-2 rounded-xl font-semibold transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-floppy-disk"></i> Save DB
-                    </button>
-                </div>
+        <!-- ======================= EVENTS & TASKS ======================= -->
+        <div x-show="tab === 'events'" style="display:none" class="space-y-3">
+            <div class="card p-4 flex flex-wrap items-center justify-between gap-3">
+                <div><h2 class="text-sm font-bold text-white"><i class="fa-solid fa-calendar-check text-sky-400 mr-1"></i> Events &amp; Tasks</h2>
+                    <p class="text-xs text-slate-400">One simple model: a title, a date, optional yearly repeat and budget. Mark a Task as done when finished.</p></div>
+                <div class="flex gap-2"><button @click="addRow('e')" class="btn btn-sky"><i class="fa-solid fa-plus"></i> Add Event / Task</button><button @click="saveAll()" class="btn btn-em"><i class="fa-solid fa-floppy-disk"></i> Save DB</button></div>
             </div>
+            <div data-nosave class="panel p-3 flex flex-wrap items-center gap-3 text-xs">
+                <select x-model="ef.kind" aria-label="Kind" class="inp !w-auto"><option value="All">Events &amp; tasks</option><option value="Event">Events only</option><option value="Task">Tasks only</option></select>
+                <label class="flex items-center gap-1.5 text-slate-300"><input type="checkbox" x-model="ef.showDone" class="rounded bg-slate-950 border-slate-700"> Show completed tasks</label>
+                <span class="text-slate-500" x-text="eRows.length + ' row(s)'"></span>
+            </div>
+            <p x-show="!eRows.length" class="text-center text-xs text-slate-500 py-8">No events or tasks yet.</p>
 
-            <div class="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 overflow-x-auto shadow-lg">
-                <table class="w-full text-left text-xs text-slate-300 rt md:min-w-[600px]">
-                    <thead class="bg-slate-950/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
-                        <tr>
-                            <th class="p-3">Event / Person</th>
-                            <th class="p-3">Relationship</th>
-                            <th class="p-3">Date (every year)</th>
-                            <th class="p-3">Budget</th>
-                            <th class="p-3">Currency</th>
-                            <th class="p-3">Notes</th>
-                            <th class="p-3 text-center">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-800/60">
-                        <template x-for="ev in eventsList" :key="ev.id">
-                            <tr class="hover:bg-slate-800/30 transition">
-                                <td data-label="Event / Person" class="p-2.5"><input type="text" x-model="ev.name" :class="bad('e', ev, 'name')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
-                                <td data-label="Relationship" class="p-2.5"><input type="text" x-model="ev.relation" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
-                                <td data-label="Date (day / month)" class="p-2.5"><div class="flex gap-1">
-                                    <select x-model.number="ev.eventMonth" @change="$nextTick(() => fixDay(ev, 'eventMonth', 'eventDay'))" :class="bad('e', ev, 'eventMonth')" aria-label="Event month" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Month</option><template x-for="(mn, i) in monthNames" :key="mn"><option :value="i + 1" :selected="i + 1 === Number(ev.eventMonth)" x-text="mn"></option></template></select>
-                                    <select x-model.number="ev.eventDay" :class="bad('e', ev, 'eventDay')" aria-label="Event day" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white"><option value="">Day</option><template x-for="d in dayList(ev.eventMonth)" :key="d"><option :value="d" :selected="d === Number(ev.eventDay)" x-text="d"></option></template></select>
-                                </div></td>
-                                <td data-label="Budget" class="p-2.5"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="ev.budget" :class="bad('e', ev, 'budget')" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-24 text-xs text-white"></td>
-                                <td data-label="Currency" class="p-2.5">
-                                    <select x-model="ev.currency" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs text-white">
-                                        <template x-for="curr in currencies" :key="curr"><option :value="curr" :selected="curr === ev.currency" x-text="curr"></option></template>
-                                    </select>
-                                </td>
-                                <td data-label="Notes" class="p-2.5"><input type="text" x-model="ev.notes" class="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 w-full text-xs text-white"></td>
-                                <td data-label="" class="p-2.5 text-center">
-                                    <span x-show="errList('e', ev).length" :title="errList('e', ev).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
-                                    <button @click="deleteEvent(ev)" aria-label="Delete event" class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg"><i class="fa-solid fa-trash-can text-sm"></i></button>
+            <template x-if="!isDesktop"><div class="space-y-2">
+                <template x-for="(e, i) in eRows" :key="e.id">
+                    <div class="card p-3 text-xs" :data-row="e.id" :class="flashId === e.id ? 'ring-2 ring-sky-400' : ''">
+                        <div class="flex items-start gap-2">
+                            <span class="rowno mt-0.5" x-text="i + 1"></span>
+                            <div class="flex-1 min-w-0"><p class="font-bold text-white text-sm truncate" :class="e.done ? 'line-through opacity-60' : ''" x-text="e.title || 'Untitled'"></p>
+                                <p class="text-slate-400"><span x-text="e.kind"></span> · <span x-text="fmtDate(evNext(e) || e.eventDate)"></span><span x-show="e.repeat === 'Yearly'"> · every year</span></p></div>
+                            <div class="text-right shrink-0"><p x-show="e.budget" class="font-bold text-slate-100" x-text="money(e.budget, e.currency)"></p><span class="badge" :class="evClass(e)" x-text="evState(e)"></span></div>
+                        </div>
+                        <p x-show="e.notes" class="mt-1 text-[11px] text-slate-500 truncate" x-text="e.notes"></p>
+                        <div class="flex gap-2 mt-2 pt-2 border-t border-slate-800">
+                            <button x-show="e.kind === 'Task'" @click="toggleDone(e)" class="btn btn-em !py-1"><i class="fa-solid" :class="e.done ? 'fa-rotate-left' : 'fa-check'"></i> <span x-text="e.done ? 'Re-open' : 'Done'"></span></button>
+                            <button @click="openModal('e', e)" class="btn btn-ghost !py-1 ml-auto"><i class="fa-solid fa-pen"></i> Edit</button><button @click="deleteRow('e', e)" class="btn btn-red !py-1" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </div>
+                </template>
+            </div></template>
+
+            <template x-if="isDesktop"><div class="card overflow-x-auto">
+                <table class="w-full text-xs min-w-[900px]">
+                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th">#</th><th class="th">Kind</th><th class="th">Title</th><th class="th">Date</th><th class="th">Repeat</th><th class="th">Budget</th><th class="th">Status</th><th class="th text-center">Actions</th></tr></thead>
+                    <tbody class="divide-y divide-slate-800/70">
+                        <template x-for="(e, i) in eRows" :key="e.id">
+                            <tr :data-row="e.id" class="hover:bg-slate-800/30" :class="[e._draft ? 'bg-sky-950/30' : '', flashId === e.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
+                                <td class="td"><span class="rowno" x-text="i + 1"></span></td>
+                                <td class="td"><select x-model="e.kind" aria-label="Kind" class="inp w-24"><option>Event</option><option>Task</option></select></td>
+                                <td class="td min-w-[180px]"><input type="text" x-model="e.title" :class="bad('e', e, 'title')" :style="e.done ? 'text-decoration:line-through;opacity:.6' : ''" aria-label="Title" class="inp"></td>
+                                <td class="td"><input type="date" x-model="e.eventDate" :class="bad('e', e, 'eventDate')" aria-label="Date" class="inp w-36"></td>
+                                <td class="td"><select x-model="e.repeat" aria-label="Repeat" class="inp w-28"><option value="None">Does not repeat</option><option value="Yearly">Every year</option></select></td>
+                                <td class="td"><div class="flex gap-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="e.budget" :class="bad('e', e, 'budget')" aria-label="Budget" class="inp w-24">
+                                    <select x-model="e.currency" aria-label="Currency" class="inp w-[4.5rem]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === e.currency" x-text="r"></option></template></select></div></td>
+                                <td class="td"><span class="badge" :class="evClass(e)" x-text="evState(e)"></span><span x-show="errList('e', e).length" :title="errList('e', e).join(', ')" class="text-red-400 ml-1"><i class="fa-solid fa-triangle-exclamation"></i></span></td>
+                                <td class="td whitespace-nowrap text-center">
+                                    <template x-if="e._draft"><span><button @click="saveRow('e', e)" class="btn btn-sky !py-1"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('e', e)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
+                                    <template x-if="!e._draft"><span>
+                                        <button x-show="e.kind === 'Task'" @click="toggleDone(e)" :title="e.done ? 'Re-open' : 'Mark done'" :aria-label="e.done ? 'Re-open' : 'Mark done'" class="text-emerald-400 hover:text-emerald-300 p-1.5"><i class="fa-solid" :class="e.done ? 'fa-rotate-left' : 'fa-circle-check'"></i></button>
+                                        <button @click="openModal('e', e)" title="Edit (notes…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1.5"><i class="fa-solid fa-pen"></i></button>
+                                        <button @click="deleteRow('e', e)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template>
                                 </td>
                             </tr>
                         </template>
                     </tbody>
-                </table>
-                <p x-show="!eventsList.length" class="text-center text-xs text-slate-500 py-8">No events yet. Add a birthday or anniversary.</p>
-            </div>
+                </table></div></template>
         </div>
-
     </main>
 
-    <!-- Mobile Bottom Navigation Bar -->
+    <!-- ======================= EDIT / ADD MODAL (commitment, expense row, event) ======================= -->
+    <div x-show="modal.show" style="display:none" @click.self="closeModal()" @keydown.escape.window="modal.show && closeModal()" role="dialog" aria-modal="true" aria-label="Edit row"
+         class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/80 backdrop-blur-sm sm:p-4">
+        <template x-if="modal.show && modal.item">
+            <div class="bg-slate-900 border border-slate-700 w-full sm:max-w-xl rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+                    <h3 class="font-bold text-white text-sm" x-text="(modal.isNew ? 'Add ' : 'Edit ') + ({ c: 'commitment', l: 'expense row', e: 'event / task' })[modal.kind]"></h3>
+                    <button @click="closeModal()" aria-label="Close" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+                </div>
+                <div class="overflow-y-auto px-5 py-4 grid grid-cols-2 gap-3 text-xs">
+                    <!-- commitment -->
+                    <template x-if="modal.kind === 'c'"><div class="contents">
+                        <div class="col-span-2"><label class="lbl">Name *</label><input type="text" x-model="modal.item.name" :class="bad('c', modal.item, 'name')" class="inp"></div>
+                        <div><label class="lbl">Region</label><select x-model="modal.item.region" class="inp"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === modal.item.region" x-text="r"></option></template></select></div>
+                        <div><label class="lbl">Category</label><input type="text" list="catList" x-model="modal.item.category" class="inp"></div>
+                        <div><label class="lbl">Amount *</label><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="modal.item.amount" :class="bad('c', modal.item, 'amount')" class="inp"></div>
+                        <div><label class="lbl">Currency</label><select x-model="modal.item.currency" class="inp"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === modal.item.currency" x-text="r"></option></template></select></div>
+                        <div><label class="lbl">Frequency</label><select x-model="modal.item.frequency" @change="$nextTick(() => onFreqChange(modal.item))" class="inp"><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === modal.item.frequency" x-text="r"></option></template></select></div>
+                        <div>
+                            <template x-if="modal.item.frequency === 'Monthly'"><div><label class="lbl">Due day *</label><select x-model.number="modal.item.dueDay" :class="bad('c', modal.item, 'dueDay')" class="inp"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(modal.item.dueDay)" x-text="d"></option></template></select></div></template>
+                            <template x-if="modal.item.frequency === 'Yearly' || modal.item.frequency === 'Bi-Monthly'"><div><label class="lbl" x-text="modal.item.frequency === 'Yearly' ? 'Due month / day *' : 'First due month / day *'"></label><div class="flex gap-1">
+                                <select x-model.number="modal.item.dueMonth" @change="$nextTick(() => fixDay(modal.item))" :class="bad('c', modal.item, 'dueMonth')" class="inp"><option value="">Month</option><template x-for="(mn, k) in monthNames" :key="mn"><option :value="k + 1" :selected="k + 1 === Number(modal.item.dueMonth)" x-text="mn"></option></template></select>
+                                <select x-model.number="modal.item.dueDay" :class="bad('c', modal.item, 'dueDay')" class="inp"><option value="">Day</option><template x-for="d in dayList(modal.item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(modal.item.dueDay)" x-text="d"></option></template></select></div></div></template>
+                        </div>
+                        <div><label class="lbl">Start date *</label><input type="date" x-model="modal.item.startDate" :class="bad('c', modal.item, 'startDate')" class="inp"></div>
+                        <div><label class="lbl" x-text="modal.item.frequency === 'One-Time' ? 'Due date *' : 'End date (empty = ongoing)'"></label><input type="date" x-model="modal.item.endDate" :class="bad('c', modal.item, 'endDate')" class="inp"></div>
+                        <div class="col-span-2"><label class="lbl">Payment method</label><input type="text" list="methodList" x-model="modal.item.method" class="inp"></div>
+                        <div class="col-span-2"><label class="lbl">Notes</label><textarea rows="2" x-model="modal.item.notes" class="inp"></textarea></div>
+                    </div></template>
+                    <!-- expense row -->
+                    <template x-if="modal.kind === 'l'"><div class="contents">
+                        <div><label class="lbl">Actual date *</label><input type="date" x-model="modal.item.actualDate" :class="bad('l', modal.item, 'actualDate')" class="inp"></div>
+                        <div><label class="lbl">Commitment date</label><input type="date" x-model="modal.item.commitmentDate" :class="bad('l', modal.item, 'commitmentDate')" class="inp"></div>
+                        <div class="col-span-2"><label class="lbl">Linked commitment</label><select x-model.number="modal.item.commitmentId" @change="$nextTick(() => onLinkChange(modal.item))" :class="bad('l', modal.item, 'commitmentId')" class="inp"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(modal.item.commitmentId)" x-text="c.name"></option></template></select></div>
+                        <div class="col-span-2"><label class="lbl">Description *</label><input type="text" x-model="modal.item.item" :class="bad('l', modal.item, 'item')" class="inp"></div>
+                        <div><label class="lbl">Category</label><input type="text" list="catList" x-model="modal.item.category" class="inp"></div>
+                        <div><label class="lbl">Region</label><select x-model="modal.item.region" class="inp"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === modal.item.region" x-text="r"></option></template></select></div>
+                        <div><label class="lbl">Amount *</label><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="modal.item.amount" :class="bad('l', modal.item, 'amount')" class="inp"></div>
+                        <div><label class="lbl">Currency</label><select x-model="modal.item.currency" class="inp"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === modal.item.currency" x-text="r"></option></template></select></div>
+                        <div class="col-span-2"><label class="lbl">Method</label><input type="text" list="methodList" x-model="modal.item.method" class="inp"></div>
+                        <div class="col-span-2"><label class="lbl">Notes</label><textarea rows="2" x-model="modal.item.notes" class="inp"></textarea></div>
+                    </div></template>
+                    <!-- event / task -->
+                    <template x-if="modal.kind === 'e'"><div class="contents">
+                        <div class="col-span-2"><label class="lbl">Title *</label><input type="text" x-model="modal.item.title" :class="bad('e', modal.item, 'title')" class="inp"></div>
+                        <div><label class="lbl">Kind</label><select x-model="modal.item.kind" class="inp"><option>Event</option><option>Task</option></select></div>
+                        <div><label class="lbl">Date *</label><input type="date" x-model="modal.item.eventDate" :class="bad('e', modal.item, 'eventDate')" class="inp"></div>
+                        <div><label class="lbl">Repeat</label><select x-model="modal.item.repeat" class="inp"><option value="None">Does not repeat</option><option value="Yearly">Every year</option></select></div>
+                        <div><label class="lbl">Budget</label><div class="flex gap-1"><input type="number" min="0" step="0.01" x-model.number="modal.item.budget" :class="bad('e', modal.item, 'budget')" class="inp">
+                            <select x-model="modal.item.currency" class="inp w-24"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === modal.item.currency" x-text="r"></option></template></select></div></div>
+                        <div class="col-span-2"><label class="lbl">Notes</label><textarea rows="2" x-model="modal.item.notes" class="inp"></textarea></div>
+                    </div></template>
+                </div>
+                <div class="px-5 py-4 border-t border-slate-800 flex flex-wrap gap-2 justify-end">
+                    <button x-show="!modal.isNew" @click="deleteRow(modal.kind, modal.orig); closeModal()" class="btn btn-red mr-auto"><i class="fa-solid fa-trash"></i> Delete</button>
+                    <button @click="closeModal()" class="btn btn-ghost">Cancel</button>
+                    <button x-show="modal.kind === 'c'" @click="saveModal(true)" class="btn btn-em"><i class="fa-solid fa-check"></i> Save &amp; mark paid</button>
+                    <button @click="saveModal(false)" class="btn btn-sky"><i class="fa-solid fa-floppy-disk"></i> <span x-text="modal.isNew ? 'Add' : 'Save changes'"></span></button>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Toast -->
+    <div x-show="toast.show" style="display:none" role="status" aria-live="polite"
+         x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-200 transform" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 translate-y-2"
+         class="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:max-w-sm z-[60] bg-slate-800/95 backdrop-blur-md border border-slate-700 rounded-2xl p-4 shadow-2xl flex items-center gap-3 text-sm text-slate-100">
+        <div class="p-2 rounded-xl" :class="toast.type === 'error' ? 'bg-red-500/20 text-red-400' : toast.type === 'info' ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400'">
+            <i class="fa-solid text-lg" :class="toast.type === 'error' ? 'fa-circle-exclamation' : toast.type === 'info' ? 'fa-circle-info' : 'fa-circle-check'"></i></div>
+        <span x-text="toast.message" class="font-medium"></span>
+    </div>
+
     <nav id="bottomNav" aria-label="Primary" class="md:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 z-40 px-2 py-1.5 flex justify-around items-center">
         <button @click="tab = 'dashboard'" :class="tab === 'dashboard' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
             <i class="fa-solid fa-chart-pie text-base mb-0.5"></i>
@@ -661,580 +561,6 @@
             <span>Events</span>
         </button>
     </nav>
-
-    <!-- WASM SQLite Engine Logic & App State -->
-    <script>
-        const LS_KEY = 'sqlite_db_b64';          // compact base64 storage (v3.1+)
-        const LS_LEGACY = 'sqlite_db_binary';    // old JSON-array storage, migrated automatically
-        const SCHEMA = {
-            // INTEGER = whole numbers (day, month) | REAL = money (rounded to 2 decimals) | TEXT = text, ISO dates (YYYY-MM-DD), month keys (YYYY-MM)
-            commitments:  { name:'TEXT', region:'TEXT', category:'TEXT', amount:'REAL', currency:'TEXT', frequency:'TEXT', dueDay:'INTEGER', dueMonth:'INTEGER', dueDate:'TEXT', method:'TEXT', notes:'TEXT', status:'TEXT', paidMonth:'TEXT' },
-            expense_logs: { date:'TEXT', region:'TEXT', category:'TEXT', item:'TEXT', amount:'REAL', currency:'TEXT', method:'TEXT', notes:'TEXT' },
-            events_list:  { name:'TEXT', relation:'TEXT', eventDay:'INTEGER', eventMonth:'INTEGER', budget:'REAL', currency:'TEXT', notes:'TEXT', date:'TEXT' /* legacy "15-May" text, migrated to eventDay/eventMonth */ }
-        };
-        const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-        const CYCLE = { 'Monthly': 1, 'Bi-Monthly': 2, 'Yearly': 12 };
-        let db = null, SQLMod = null;
-
-        /* ---------- helpers ---------- */
-        const store = {
-            get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-            set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
-            del(k) { try { localStorage.removeItem(k); } catch (e) {} }
-        };
-        const pad = n => String(n).padStart(2, '0');
-        const localISO = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;   // local time, not UTC
-        const monthKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-        const prevMonthKey = d => monthKey(new Date(d.getFullYear(), d.getMonth() - 1, 1));                         // safe on the 29th-31st
-        const monthsBetween = (a, b) => { const [ay, am] = a.split('-').map(Number), [by, bm] = b.split('-').map(Number); return (by - ay) * 12 + (bm - am); };
-        const isISO = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
-        const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const daysInMonth = m => [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1] || 31;   // Feb allows 29 (leap years)
-        const toInt = v => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); return Number.isInteger(n) ? n : null; };
-        const toMoney = v => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
-        const validISO = s => { if (!isISO(s)) return false; const [y, m, d] = s.split('-').map(Number); const t = new Date(y, m - 1, d); return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d; };
-        const parseDayMon = s => {
-            const m = /^(\d{1,2})[-\/ ]([A-Za-z]{3})/.exec(String(s || '').trim());
-            if (!m) return null;
-            const mi = MONTHS.indexOf(m[2].toLowerCase()), d = +m[1];
-            return (mi < 0 || d < 1 || d > 31) ? null : { d, m: mi };
-        };
-        const fmtNum = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const fmtMoney = (v, c) => (c ? c + ' ' : '') + fmtNum(v);
-        const toB64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
-        const fromB64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
-        const rowsOf = sql => {
-            const res = db.exec(sql);
-            if (!res.length) return [];
-            const cols = res[0].columns;
-            return res[0].values.map(r => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
-        };
-        const tx = fn => { db.run('BEGIN'); try { fn(); db.run('COMMIT'); } catch (e) { try { db.run('ROLLBACK'); } catch (_) {} throw e; } };
-        const INS = t => `INSERT INTO ${t} (id, ${Object.keys(SCHEMA[t]).join(', ')}) VALUES (${Object.keys(SCHEMA[t]).map(() => '?').concat('?').join(', ')})`;
-        const rowVals = (t, r) => [r.id ?? null, ...Object.entries(SCHEMA[t]).map(([k, ty]) => ty === 'REAL' ? toMoney(r[k]) : ty === 'INTEGER' ? toInt(r[k]) : String(r[k] ?? ''))];
-        const clean = r => { for (const k in r) if (r[k] === null) r[k] = ''; return r; };
-        const downloadBlob = (blob, name) => {
-            const url = URL.createObjectURL(blob), a = document.createElement('a');
-            a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1500);
-        };
-        async function getSQL() {
-            if (SQLMod) return SQLMod;
-            if (typeof window.initSqlJs !== 'function') throw new Error('SQL engine files not found. Keep the "assets" folder next to index.html.');
-            // The .wasm is embedded as base64, so nothing is fetched (works when opened straight from disk, even offline).
-            const cfg = window.SQL_WASM_BASE64 ? { wasmBinary: fromB64(window.SQL_WASM_BASE64).buffer } : { locateFile: f => 'assets/js/' + f };
-            try { SQLMod = await window.initSqlJs(cfg); }
-            catch (e) { throw new Error('Could not start the SQL engine (' + (e.message || e) + '). Keep the "assets" folder next to index.html.'); }
-            window.SQL_WASM_BASE64 = null;
-            return SQLMod;
-        }
-        function createTables() {
-            for (const [t, cols] of Object.entries(SCHEMA)) {
-                const colSql = Object.entries(cols).map(([c, ty]) => `${c} ${ty}`).join(', ');
-                db.run(`CREATE TABLE IF NOT EXISTS ${t} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${colSql})`);
-                let info = rowsOf(`PRAGMA table_info(${t})`);
-                for (const [c, ty] of Object.entries(cols)) if (!info.some(r => r.name === c)) db.run(`ALTER TABLE ${t} ADD COLUMN ${c} ${ty}`);   // older/imported DBs
-                info = rowsOf(`PRAGMA table_info(${t})`);
-                if (info.some(r => cols[r.name] && String(r.type).toUpperCase() !== cols[r.name])) {      // e.g. old TEXT dueDay -> INTEGER: rebuild table, keep data
-                    const common = info.map(r => r.name).filter(n => n === 'id' || cols[n]).join(', ');
-                    tx(() => {
-                        db.run(`ALTER TABLE ${t} RENAME TO ${t}_old`);
-                        db.run(`CREATE TABLE ${t} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${colSql})`);
-                        db.run(`INSERT INTO ${t} (${common}) SELECT ${common} FROM ${t}_old`);
-                        db.run(`DROP TABLE ${t}_old`);
-                    });
-                }
-            }
-        }
-
-        function trackerApp() {
-            return {
-                tab: 'dashboard',
-                currencies: ['AED', 'INR', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'SAR', 'QAR'],
-                commitments: [], expenseLogs: [], eventsList: [],
-                selectedRowIds: [], viewIds: [],
-                toast: { show: false, message: '', type: 'success' },
-                editModal: { show: false, item: null, orig: null },
-                filters: { search: '', region: 'All', frequency: 'All', currency: 'All', sortBy: 'dueDate' },
-                loading: true, loadError: '', saveState: 'saved', isDesktop: true, clock: Date.now(),
-                _saveTimer: null, _toastTimer: null,
-                money: fmtMoney, monthNames: MONTH_NAMES,
-
-                /* ---------- boot ---------- */
-                async initDB() {
-                    if (window.matchMedia) {
-                        const mq = window.matchMedia('(min-width: 1024px)');
-                        this.isDesktop = mq.matches;
-                        mq.addEventListener('change', e => { this.isDesktop = e.matches; });
-                    }
-                    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.onResume(); });
-                    window.addEventListener('beforeunload', () => { if (this.saveState === 'dirty' && db) this.persist({ toast: false, refresh: false }); });
-                    this.$watch('filters', () => this.refreshView());
-                    try {
-                        const SQL = await getSQL();
-                        const b64 = store.get(LS_KEY), legacy = store.get(LS_LEGACY), raw = b64 || legacy;
-                        let opened = false;
-                        if (raw) {
-                            try {
-                                db = new SQL.Database(b64 ? fromB64(b64) : new Uint8Array(JSON.parse(legacy)));
-                                this.migrateTables();
-                                opened = true;
-                            } catch (e) {
-                                console.error('Saved database unreadable:', e);
-                                store.set('sqlite_db_corrupt_backup', raw);
-                                this.showToast('Saved data was unreadable. A backup copy was kept and a fresh database was started.', 'error');
-                                db = null;
-                            }
-                        }
-                        if (!opened) { db = new SQL.Database(); createTables(); }   // first run: start completely empty
-                        this.loadDataFromDB();
-                        this.rollover();
-                        const saved = this.persist({ toast: false, refresh: false });
-                        if (saved && !b64 && legacy) store.del(LS_LEGACY);
-                    } catch (e) {
-                        console.error(e);
-                        this.loadError = e.message || 'Failed to start the database.';
-                    } finally {
-                        this.loading = false;
-                    }
-                },
-
-                migrateTables() {
-                    createTables();
-                    for (const [tbl, region, cur] of [['uae_payments', 'UAE', 'AED'], ['india_payments', 'India', 'INR']]) {
-                        try {
-                            if (!rowsOf(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tbl}'`).length) continue;
-                            tx(() => {
-                                rowsOf(`SELECT * FROM ${tbl}`).forEach(p => db.run(INS('commitments'), rowVals('commitments', {
-                                    name: p.name, region, category: p.category, amount: p.amount, currency: cur, frequency: p.frequency || 'Monthly',
-                                    dueDay: p.dueDay, dueDate: '', method: p.method, notes: p.notes, status: 'Pending', paidMonth: ''
-                                })));
-                                db.run(`DROP TABLE ${tbl}`);
-                            });
-                        } catch (e) { console.warn('Legacy migration skipped for ' + tbl + ':', e.message); }
-                    }
-                },
-
-                loadDataFromDB() {
-                    this.commitments = rowsOf('SELECT * FROM commitments ORDER BY id').map(clean).map(r => {
-                        const c = {
-                            ...r, amount: toMoney(r.amount), region: r.region || 'UAE', currency: r.currency || 'AED', frequency: r.frequency || 'Monthly',
-                            status: r.status || 'Pending', dueDay: toInt(r.dueDay) ?? '', dueMonth: toInt(r.dueMonth) ?? '', dueDate: String(r.dueDate ?? '')
-                        };
-                        if (c.frequency !== 'Monthly' && c.frequency !== 'One-Time' && c.dueMonth === '') {      // older versions stored "15-Nov" as text
-                            const p = parseDayMon(c.dueDate);
-                            if (p) { c.dueMonth = p.m + 1; c.dueDay = p.d; c.dueDate = ''; }
-                        }
-                        if (c.frequency === 'One-Time' && c.dueDate && !validISO(c.dueDate)) c.dueDate = '';
-                        return c;
-                    });
-                    this.expenseLogs = rowsOf('SELECT * FROM expense_logs ORDER BY date DESC, id DESC').map(clean).map(l => ({
-                        ...l, amount: toMoney(l.amount), region: l.region || 'UAE', currency: l.currency || 'AED'
-                    }));
-                    this.eventsList = rowsOf('SELECT * FROM events_list ORDER BY id').map(clean).map(r => {
-                        const e = { ...r, budget: toMoney(r.budget), currency: r.currency || 'AED', eventDay: toInt(r.eventDay) ?? '', eventMonth: toInt(r.eventMonth) ?? '' };
-                        if (e.eventMonth === '' && e.date) { const p = parseDayMon(e.date); if (p) { e.eventMonth = p.m + 1; e.eventDay = p.d; } }
-                        e.date = '';
-                        return e;
-                    });
-                    this.selectedRowIds = [];
-                    this.refreshView();
-                },
-
-                /* ---------- persistence ---------- */
-                saveBinary() {
-                    try { return store.set(LS_KEY, toB64(db.export())); } catch (e) { console.error(e); return false; }
-                },
-
-                persist(opts = {}) {
-                    const { toast = true, refresh = true } = opts;
-                    clearTimeout(this._saveTimer);
-                    if (!db) return false;
-                    try {
-                        tx(() => {
-                            ['commitments', 'expense_logs', 'events_list'].forEach(t => db.run(`DELETE FROM ${t}`));
-                            this.commitments.forEach(r => db.run(INS('commitments'), rowVals('commitments', r)));
-                            this.expenseLogs.forEach(r => db.run(INS('expense_logs'), rowVals('expense_logs', r)));
-                            this.eventsList.forEach(r => db.run(INS('events_list'), rowVals('events_list', r)));
-                        });
-                        if (!this.saveBinary()) {
-                            this.saveState = 'error';
-                            this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error');
-                            return false;
-                        }
-                        this.saveState = 'saved';
-                        if (refresh) this.refreshView();
-                        if (toast) this.showToast('Database synced and saved!');
-                        return true;
-                    } catch (e) {
-                        console.error(e);
-                        this.saveState = 'error';
-                        this.showToast('Save failed: ' + e.message, 'error');
-                        return false;
-                    }
-                },
-
-                touch() {
-                    this.saveState = 'dirty';
-                    clearTimeout(this._saveTimer);
-                    this._saveTimer = setTimeout(() => this.persist({ toast: false, refresh: false }), 800);
-                },
-                onEdit(e) { if (e.target.closest && e.target.closest('[data-nosave]')) return; this.touch(); },
-                get saveLabel() { return { saved: 'All changes saved', dirty: 'Unsaved changes…', error: 'Save failed – export a backup' }[this.saveState]; },
-
-                exportSQLite() {
-                    this.persist({ toast: false, refresh: false });
-                    downloadBlob(new Blob([db.export()], { type: 'application/x-sqlite3' }), 'gowtham_tracker_' + localISO() + '.db');
-                },
-
-                exportCSV() {
-                    const cell = v => {
-                        if (v === null || v === undefined) return '';
-                        let s = String(v);
-                        if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;       // neutralise spreadsheet formulas
-                        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-                    };
-                    const rows = [['Type', 'Date', 'Name / Item', 'Region', 'Category', 'Amount', 'Currency', 'Frequency', 'Due', 'Status', 'Method', 'Notes']];
-                    this.commitments.forEach(c => rows.push(['Commitment', '', c.name, c.region, c.category, c.amount, c.currency, c.frequency, this.getDueDateDisplay(c), c.status, c.method, c.notes]));
-                    this.expenseLogs.forEach(l => rows.push(['ExpenseLog', l.date, l.item, l.region, l.category, l.amount, l.currency, '', '', '', l.method, l.notes]));
-                    this.eventsList.forEach(e => rows.push(['Event', this.eventDateText(e), e.name, '', e.relation, e.budget, e.currency, '', '', '', '', e.notes]));
-                    const csv = '\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n');
-                    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'gowtham_export_' + localISO() + '.csv');
-                    this.showToast('CSV exported successfully!');
-                },
-
-                async importSQLite(event) {
-                    const input = event.target, file = input.files && input.files[0];
-                    if (!file) return;
-                    try {
-                        if (!confirm('Importing replaces ALL current data in this browser. Continue?')) return;
-                        const u8 = new Uint8Array(await file.arrayBuffer());
-                        const SQL = await getSQL();
-                        const candidate = new SQL.Database(u8), prev = db;
-                        try {
-                            const names = rowsOfIn(candidate, "SELECT name FROM sqlite_master WHERE type='table'");   // throws on invalid files
-                            if (!names.some(n => [...Object.keys(SCHEMA), 'uae_payments', 'india_payments'].includes(n)))
-                                throw new Error('this file is not a tracker database');
-                            db = candidate;
-                            this.migrateTables();
-                            this.loadDataFromDB();
-                            this.rollover();
-                            this.persist({ toast: false });
-                            if (prev) prev.close();
-                            this.showToast('SQLite database loaded!');
-                        } catch (err) {
-                            db = prev;
-                            try { candidate.close(); } catch (_) {}
-                            try { if (db) this.loadDataFromDB(); } catch (_) {}
-                            throw err;
-                        }
-                    } catch (err) {
-                        console.error(err);
-                        this.showToast('Import failed: ' + (err.message || 'invalid file'), 'error');
-                    } finally {
-                        input.value = '';
-                    }
-                },
-
-                /* ---------- toast ---------- */
-                showToast(message, type = 'success') {
-                    this.toast = { show: true, message, type };
-                    clearTimeout(this._toastTimer);
-                    this._toastTimer = setTimeout(() => { this.toast.show = false; }, type === 'error' ? 5000 : 3000);
-                },
-
-                /* ---------- time ---------- */
-                nowDate() { this.clock; return new Date(); },
-                onResume() { this.clock = Date.now(); this.rollover(); this.refreshView(); },
-
-                // Recurring items that were paid in an earlier cycle go back to Pending.
-                rollover() {
-                    const cur = monthKey(this.nowDate());
-                    let n = 0;
-                    this.commitments.forEach(c => {
-                        if (c.status !== 'Paid' || c.frequency === 'One-Time') return;
-                        if (!c.paidMonth) { c.paidMonth = cur; n++; return; }
-                        if (monthsBetween(c.paidMonth, cur) >= (CYCLE[c.frequency] || 1)) { c.status = 'Pending'; c.paidMonth = ''; n++; }
-                    });
-                    if (n && db) this.persist({ toast: false, refresh: false });
-                    return n;
-                },
-
-                /* ---------- list view / filters ---------- */
-                refreshView() {
-                    const f = this.filters, q = (f.search || '').toLowerCase().trim();
-                    const list = this.commitments.filter(c =>
-                        (!q || [c.name, c.notes, c.category].map(x => x || '').join(' ').toLowerCase().includes(q)) &&
-                        (f.region === 'All' || c.region === f.region) &&
-                        (f.frequency === 'All' || c.frequency === f.frequency) &&
-                        (f.currency === 'All' || c.currency === f.currency));
-                    const by = f.sortBy;
-                    list.sort((a, b) => {
-                        if (by === 'amount') return (Number(b.amount) || 0) - (Number(a.amount) || 0);
-                        if (by === 'name') return (a.name || '').localeCompare(b.name || '');
-                        if (by === 'category') return (a.category || '').localeCompare(b.category || '');
-                        return this.dueSortKey(a) - this.dueSortKey(b) || (a.name || '').localeCompare(b.name || '');
-                    });
-                    this.viewIds = list.map(c => c.id);
-                },
-                // Order is frozen between refreshes so rows don't jump or vanish while being edited.
-                get filteredCommitments() {
-                    const map = new Map(this.commitments.map(c => [c.id, c]));
-                    return this.viewIds.map(id => map.get(id)).filter(Boolean);
-                },
-                dueSortKey(c) {
-                    const now = this.nowDate(), d = this.dueDayNum(c, now);
-                    return (this.isDueThisMonth(c, now) ? 0 : 100) + (d === null ? 99 : d);
-                },
-
-                /* ---------- selection ---------- */
-                get selectedItems() {
-                    const ids = new Set(this.selectedRowIds.map(Number));
-                    return this.filteredCommitments.filter(c => ids.has(Number(c.id)));
-                },
-                get allSelected() {
-                    const v = this.filteredCommitments;
-                    if (!v.length) return false;
-                    const s = new Set(this.selectedRowIds.map(Number));
-                    return v.every(c => s.has(Number(c.id)));
-                },
-                get selectedTotalsDisplay() {
-                    return this.fmtMap(this.sumBy(this.selectedItems)).replace(/\n/g, ' + ');
-                },
-                toggleSelectAll(e) {
-                    const ids = this.filteredCommitments.map(c => Number(c.id)), cur = this.selectedRowIds.map(Number);
-                    this.selectedRowIds = e.target.checked ? [...new Set([...cur, ...ids])] : cur.filter(id => !ids.includes(id));
-                },
-
-                /* ---------- paying ---------- */
-                newId(list) { return list.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0) + 1; },
-                payItem(item) {
-                    const now = this.nowDate();
-                    item.status = 'Paid';
-                    item.paidMonth = monthKey(now);
-                    this.expenseLogs.unshift({
-                        id: this.newId(this.expenseLogs), date: localISO(now), region: item.region || 'UAE', category: item.category || 'General',
-                        item: item.name || 'Payment', amount: Number(item.amount) || 0, currency: item.currency || 'AED',
-                        method: item.method || 'Auto', notes: item.notes || 'Auto-logged from Pay Module'
-                    });
-                },
-                markAsPaid(item) {
-                    if (item.status === 'Paid') { this.showToast(`"${item.name || 'Item'}" is already marked as paid.`, 'info'); return; }
-                    const errs = this.errList('c', item);
-                    if (errs.length) { this.showToast(`Fix "${item.name || 'this item'}" first: ${errs.join(', ')}`, 'error'); return; }
-                    this.payItem(item);
-                    if (this.persist({ toast: false })) this.showToast(`Logged "${item.name || 'Payment'}" as paid in Expense Log!`);
-                },
-                markAsPending(item) {
-                    item.status = 'Pending';
-                    item.paidMonth = '';
-                    if (this.persist({ toast: false })) this.showToast('Marked as pending. Remove its Expense Log row if it was logged by mistake.', 'info');
-                },
-                markSelectedAsPaid() {
-                    const unpaid = this.selectedItems.filter(i => i.status !== 'Paid');
-                    const todo = unpaid.filter(i => !this.errList('c', i).length);
-                    if (!todo.length) { this.showToast(unpaid.length ? 'Selected items have missing or invalid fields. Fix the red fields first.' : 'Selected items are already paid.', unpaid.length ? 'error' : 'info'); return; }
-                    todo.forEach(i => this.payItem(i));
-                    this.selectedRowIds = [];
-                    if (this.persist({ toast: false })) this.showToast(`Logged ${todo.length} payment(s) in Expense Log!` + (unpaid.length > todo.length ? ` ${unpaid.length - todo.length} skipped (invalid).` : ''));
-                },
-
-                /* ---------- due-date logic ---------- */
-                isDueThisMonth(c, now = this.nowDate()) {
-                    const mk = monthKey(now);
-                    if (c.frequency === 'Monthly') return true;
-                    if (c.frequency === 'One-Time') {
-                        if (!validISO(c.dueDate)) return true;
-                        return c.dueDate.startsWith(mk) || (c.dueDate < mk + '-01' && c.status !== 'Paid');
-                    }
-                    const m = toInt(c.dueMonth);
-                    if (!m) return false;
-                    if (c.frequency === 'Yearly') return m - 1 === now.getMonth();
-                    if (c.frequency === 'Bi-Monthly') return (((now.getMonth() - (m - 1)) % 2) + 2) % 2 === 0;
-                    return false;
-                },
-                dueDayNum(c, now = this.nowDate()) {
-                    let d = c.frequency === 'One-Time' ? (validISO(c.dueDate) ? +c.dueDate.slice(8) : null) : toInt(c.dueDay);
-                    if (d === null || d < 1 || d > 31) return null;
-                    return Math.min(d, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate());   // 31st in a 30-day month = last day
-                },
-                get dueThisMonthItems() { const n = this.nowDate(); return this.commitments.filter(c => this.isDueThisMonth(c, n)); },
-                get paidItems() { return this.dueThisMonthItems.filter(c => c.status === 'Paid'); },
-                get pendingItems() { return this.dueThisMonthItems.filter(c => c.status !== 'Paid'); },
-                get overdueItems() {
-                    const now = this.nowDate(), day = now.getDate(), today = localISO(now);
-                    return this.commitments.filter(c => {
-                        if (c.status === 'Paid') return false;
-                        if (c.frequency === 'One-Time') return isISO(c.dueDate) && c.dueDate < today;
-                        if (!this.isDueThisMonth(c, now)) return false;
-                        const d = this.dueDayNum(c, now);
-                        return d !== null && d < day;
-                    });
-                },
-                get overdueCount() { return this.overdueItems.length; },
-                isOverdue(c) { return this.overdueItems.some(o => o.id === c.id); },
-                statusLabel(c) { return c.status === 'Paid' ? 'Paid' : (this.isOverdue(c) ? 'Overdue' : 'Pending'); },
-                statusClass(c) {
-                    const s = this.statusLabel(c);
-                    return s === 'Paid' ? 'bg-emerald-500/10 text-emerald-400' : s === 'Overdue' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400';
-                },
-                getDueDateDisplay(i) {
-                    if (i.frequency === 'Monthly') return i.dueDay ? `Day ${i.dueDay}` : 'Monthly';
-                    if (i.frequency === 'One-Time') return i.dueDate || 'One-Time';
-                    return (i.dueDay && i.dueMonth) ? `${i.dueDay} ${MONTH_NAMES[i.dueMonth - 1]}` : i.frequency;
-                },
-                eventDateText(e) { return (e.eventDay && e.eventMonth) ? `${e.eventDay} ${MONTH_NAMES[e.eventMonth - 1]}` : ''; },
-                onFreqChange(i) {
-                    if (i.frequency === 'Monthly') { i.dueDate = ''; i.dueMonth = ''; if (toInt(i.dueDay) === null) i.dueDay = 1; return; }
-                    if (i.frequency === 'One-Time') { i.dueDay = ''; i.dueMonth = ''; if (!validISO(i.dueDate)) i.dueDate = ''; return; }
-                    i.dueDate = '';
-                    this.fixDay(i);
-                },
-                dayList(m) { return Array.from({ length: daysInMonth(toInt(m) || 0) }, (_, i) => i + 1); },
-                fixDay(o, mk = 'dueMonth', dk = 'dueDay') {          // e.g. 31 -> 28/29 when month switches to February
-                    const m = toInt(o[mk]), d = toInt(o[dk]);
-                    if (m && d && d > daysInMonth(m)) o[dk] = daysInMonth(m);
-                },
-
-                /* ---------- validation ---------- */
-                validate(kind, o) {
-                    const e = {}, num = Number(o.amount);
-                    const monthDay = (mk, dk) => {
-                        const m = toInt(o[mk]), d = toInt(o[dk]);
-                        if (m === null || m < 1 || m > 12) e[mk] = 'Select a month';
-                        if (d === null || d < 1 || d > (m ? daysInMonth(m) : 31)) e[dk] = 'Select a valid day for the month';
-                    };
-                    if (kind === 'c') {
-                        if (!String(o.name || '').trim()) e.name = 'Name is required';
-                        else if (String(o.name).length > 100) e.name = 'Name is too long (max 100)';
-                        if (o.amount === '' || o.amount === null || !Number.isFinite(num) || num <= 0) e.amount = 'Amount must be a number above 0';
-                        else if (num > 1e12) e.amount = 'Amount is too large';
-                        if (o.frequency === 'Monthly') { const d = toInt(o.dueDay); if (d === null || d < 1 || d > 31) e.dueDay = 'Select a due day (1-31)'; }
-                        else if (o.frequency === 'One-Time') { if (!validISO(o.dueDate)) e.dueDate = 'Select a valid due date'; }
-                        else monthDay('dueMonth', 'dueDay');
-                    } else if (kind === 'l') {
-                        if (!validISO(o.date)) e.date = 'Select a valid date';
-                        if (!String(o.item || '').trim()) e.item = 'Description is required';
-                        if (o.amount === '' || o.amount === null || !Number.isFinite(num) || num <= 0) e.amount = 'Amount must be a number above 0';
-                    } else if (kind === 'e') {
-                        if (!String(o.name || '').trim()) e.name = 'Name is required';
-                        monthDay('eventMonth', 'eventDay');
-                        if (o.budget !== '' && o.budget !== null && (!Number.isFinite(Number(o.budget)) || Number(o.budget) < 0)) e.budget = 'Budget must be 0 or more';
-                    }
-                    return e;
-                },
-                bad(kind, o, f) { return this.validate(kind, o)[f] ? '!border-red-500 ring-1 ring-red-500' : ''; },
-                errList(kind, o) { return Object.values(this.validate(kind, o)); },
-
-                /* ---------- money, grouped per currency (no cross-currency addition) ---------- */
-                sumBy(items, fn = i => i.amount) {
-                    const m = {};
-                    items.forEach(i => { const c = i.currency || 'AED'; m[c] = (m[c] || 0) + (Number(fn(i)) || 0); });
-                    return m;
-                },
-                fmtMap(map, signed = false) {
-                    const e = Object.entries(map || {});
-                    if (!e.length) return '—';
-                    return e.map(([c, v]) => (signed && v > 0.005 ? '+' : '') + fmtMoney(v, c)).join('\n');
-                },
-                logsFor(prefix) { return this.expenseLogs.filter(l => (l.date || '').startsWith(prefix)); },
-                get requiredThisMonth() { return this.sumBy(this.dueThisMonthItems); },
-                get paidThisMonth() { return this.sumBy(this.paidItems); },
-                get pendingThisMonth() { return this.sumBy(this.pendingItems); },
-                get currentMonthExpense() { return this.sumBy(this.logsFor(monthKey(this.nowDate()))); },
-                get prevMonthExpense() { return this.sumBy(this.logsFor(prevMonthKey(this.nowDate()))); },
-                get twoMonthDiff() {
-                    const a = this.currentMonthExpense, b = this.prevMonthExpense, out = {};
-                    new Set([...Object.keys(a), ...Object.keys(b)]).forEach(k => { out[k] = (a[k] || 0) - (b[k] || 0); });
-                    return out;
-                },
-                get diffIsUp() { return Object.values(this.twoMonthDiff).some(v => v > 0.005); },
-                get ytdExpense() { return this.sumBy(this.logsFor(this.nowDate().getFullYear() + '-')); },
-                get categoryBreakdown() {
-                    const map = {};
-                    this.logsFor(this.nowDate().getFullYear() + '-').forEach(l => {
-                        const cat = l.category || 'Uncategorized', cur = l.currency || 'AED';
-                        if (!map[cat]) map[cat] = {};
-                        map[cat][cur] = (map[cat][cur] || 0) + (Number(l.amount) || 0);
-                    });
-                    return Object.entries(map).map(([cat, totals]) => ({ cat, totals })).sort((a, b) => a.cat.localeCompare(b.cat));
-                },
-                get upcomingEvents() {
-                    const n = this.nowDate(), t0 = new Date(n.getFullYear(), n.getMonth(), n.getDate());
-                    return this.eventsList.map(e => {
-                        const m = toInt(e.eventMonth), d = toInt(e.eventDay);
-                        if (!m || !d) return null;
-                        let dt = new Date(t0.getFullYear(), m - 1, d);
-                        if (dt < t0) dt = new Date(t0.getFullYear() + 1, m - 1, d);
-                        return { id: e.id, name: e.name || 'Untitled', date: this.eventDateText(e), budget: e.budget, currency: e.currency, days: Math.round((dt - t0) / 864e5) };
-                    }).filter(x => x && x.days <= 45).sort((a, b) => a.days - b.days);
-                },
-
-                /* ---------- CRUD ---------- */
-                addItem() {
-                    this.filters = { search: '', region: 'All', frequency: 'All', currency: 'All', sortBy: this.filters.sortBy };   // make sure the new row is visible
-                    const item = {
-                        id: this.newId(this.commitments), name: '', region: 'UAE', category: 'Utilities', amount: 0, currency: 'AED',
-                        frequency: 'Monthly', dueDay: 1, dueMonth: '', dueDate: '', method: 'Card', notes: '', status: 'Pending', paidMonth: ''
-                    };
-                    this.commitments.unshift(item);
-                    this.refreshView();
-                    this.touch();
-                    if (!this.isDesktop) this.openEditModal(item);
-                    else this.$nextTick(() => { const el = document.querySelector(`[data-row="${item.id}"] input[type=text]`); if (el) el.focus(); });
-                },
-                openEditModal(item) {
-                    this.editModal.orig = item;
-                    this.editModal.item = { ...item };      // edit a draft so Cancel really cancels
-                    this.editModal.show = true;
-                },
-                cancelEdit() { this.editModal.show = false; this.editModal.item = null; this.editModal.orig = null; },
-                saveEdit(markPaid = false) {
-                    const o = this.editModal.orig, d = this.editModal.item;
-                    if (!o || !d) return;
-                    const errs = this.errList('c', d);
-                    if (errs.length) { this.showToast('Please fix: ' + errs.join(', '), 'error'); return; }
-                    if (d.status === 'Paid' && !d.paidMonth) d.paidMonth = monthKey(this.nowDate());
-                    if (d.status !== 'Paid') d.paidMonth = '';
-                    Object.assign(o, d);
-                    this.cancelEdit();
-                    if (markPaid) this.markAsPaid(o); else this.persist();
-                },
-                deleteCommitment(item) {
-                    if (!confirm(`Delete "${item.name || 'this item'}"?`)) return;
-                    this.commitments = this.commitments.filter(c => c.id !== item.id);
-                    this.selectedRowIds = this.selectedRowIds.filter(id => Number(id) !== Number(item.id));
-                    this.persist();
-                },
-                addLogEntry() {
-                    this.expenseLogs.unshift({ id: this.newId(this.expenseLogs), date: localISO(), region: 'UAE', category: 'General', item: '', amount: 0, currency: 'AED', method: 'Card', notes: '' });
-                    this.touch();
-                },
-                deleteLog(log) {
-                    if (!confirm(`Delete log row "${log.item || 'untitled'}"?`)) return;
-                    this.expenseLogs = this.expenseLogs.filter(l => l.id !== log.id);
-                    this.persist();
-                },
-                addEvent() {
-                    this.eventsList.push({ id: this.newId(this.eventsList), name: '', relation: '', eventDay: '', eventMonth: '', budget: 0, currency: 'AED', notes: '' });
-                    this.touch();
-                },
-                clearAllData() {
-                    if (!confirm('Delete ALL commitments, expense logs and events? This cannot be undone.\n\nTip: use "Export DB" first if you want a backup.')) return;
-                    this.commitments = []; this.expenseLogs = []; this.eventsList = []; this.selectedRowIds = [];
-                    if (this.persist({ toast: false })) this.showToast('All data cleared.');
-                },
-                deleteEvent(ev) {
-                    if (!confirm(`Delete event "${ev.name || 'untitled'}"?`)) return;
-                    this.eventsList = this.eventsList.filter(e => e.id !== ev.id);
-                    this.persist();
-                }
-            }
-        }
-        function rowsOfIn(database, sql) {
-            const res = database.exec(sql);
-            return res.length ? res[0].values.map(r => r[0]) : [];
-        }
-    </script>
+    </div>
 </body>
 </html>
