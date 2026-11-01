@@ -1,4 +1,4 @@
-GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v5.1)
+GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v5.2)
 ==========================================================
 
 HOW TO USE
@@ -12,7 +12,19 @@ IMPORTING A DATABASE
   your current data stays untouched - open them once in the v4.0 build and export first. "Export DB" always writes schema v5.
   The header always shows which file the data came from (or the last export name) and whether anything is unsaved.
 
-WHAT IS NEW IN v5.1
+WHAT IS NEW IN v5.2
+  * Dashboard: "Still to pay" and "Due dates in this window" are one card, "Due dates & still to pay". Pick the period
+    (the dashboard window, Today -> end of this month, or the next 7/14/30/60/90 days), a status (All, Unpaid, Overdue,
+    Pending, Paid, Paused) and filters (search, category, commitment, min / max amount, include overdue). It shows the
+    total of what is listed, and you can tick rows to see the total of just those.
+  * Expense Log: tick rows (checkbox column on a laptop, the small square on a phone card) to see their total in a bar
+    at the bottom; edit or delete them from there.
+  * Pay Commitments: "Due between" date filter (with This month / Rest of month / Next month / This year buttons). It
+    uses the real due dates of every frequency, shows the due dates per row and the total due in the range.
+  * Status: a commitment with nothing overdue and nothing due this month (e.g. Yearly due in March) is now "Upcoming".
+  * A small note icon next to a name shows its notes (only when there is a note).
+
+WHAT WAS NEW IN v5.1
   * Pay Commitments: select rows (tap a card on a phone, tick a row on a laptop) and act on them from one sticky
     selection bar at the bottom: count + total of the selection, Mark paid / Mark pending / Pause / Resume / Archive /
     Edit / Delete. The total is always in view, no scrolling to the top.
