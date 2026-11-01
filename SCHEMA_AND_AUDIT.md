@@ -50,7 +50,7 @@ Due dates = every date generated from frequency/dueDay/dueMonth inside `[startDa
 | Status    | Rule |
 |-----------|------|
 | Archived  | `archived = 1` (checked first) |
-| Upcoming  | today < startDate |
+| Upcoming  | today < startDate, or (v5.2) nothing overdue and no due date in the current month (Yearly due in another month, Bi-Monthly off-month, One-Time due later) |
 | Overdue   | at least one due date before today (inside start..end) has no linked payment |
 | Completed | has an endDate and every due date in start..end is paid (or the range ended with no due dates) |
 | Paused    | `pausedMonth` = current month and this month still has an unpaid due date |

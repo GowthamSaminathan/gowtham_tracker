@@ -31,7 +31,10 @@
     const opDel = (t, id) => [`DELETE FROM ${t} WHERE id = ?`, [Number(id)]];
     const opFlags = c => ['UPDATE commitments SET pausedMonth = ?, archived = ? WHERE id = ?', [C.isMonthKey(c.pausedMonth) ? c.pausedMonth : null, C.isArchived(c) ? 1 : 0, Number(c.id)]];
     const BLANK_LF = () => ({ q: '', actualFrom: '', actualTo: '', commitFrom: '', commitTo: '', category: 'All', currency: 'All', method: 'All', link: 'any', minAmt: '', maxAmt: '' });
-    const HORIZONS = [7, 14, 30, 60, 90];
+    // Ranges of the dashboard "Due dates & still to pay" card: the dashboard window, or a period starting today.
+    const DUE_RANGES = [['window', 'This dashboard window'], ['month', 'Today → end of this month'], ['d7', 'Next 7 days'], ['d14', 'Next 14 days'], ['d30', 'Next 30 days'], ['d60', 'Next 60 days'], ['d90', 'Next 90 days']];
+    const DUE_STATUS = ['All', 'Unpaid', 'Overdue', 'Pending', 'Paid', 'Paused'];
+    const BLANK_DUEF = () => ({ q: '', cat: 'All', cid: 'All', min: '', max: '', overdue: false });
     const download = (blob, name) => {
         const url = URL.createObjectURL(blob), a = document.createElement('a');
         a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500);
@@ -93,17 +96,17 @@
             methods: ['Cash', 'Card', 'Credit card', 'Bank Transfer', 'Auto-debit', 'UPI'],
             commitments: [], expenseLogs: [], events: [], rev: 0, clock: Date.now(),
             selectedRowIds: [], cView: [], eView: [], lView: { ids: [], total: 0, totals: [] }, flashId: null,
-            f: { search: '', frequency: 'All', currency: 'All', status: 'All', sortBy: 'due' }, showFilters: false, showLogFilters: false,
+            f: { search: '', frequency: 'All', currency: 'All', status: 'All', sortBy: 'due', dueFrom: '', dueTo: '' }, showFilters: false, showLogFilters: false,
             lf: BLANK_LF(), payView: 'active',
             ls: [{ col: 'actualDate', dir: 'desc' }, { col: 'amount', dir: 'desc' }, { col: '', dir: 'asc' }],
             sortCols: [['actualDate', 'Actual date'], ['commitmentDate', 'Commitment date'], ['item', 'Description'], ['category', 'Category'], ['amount', 'Amount'], ['currency', 'Currency'], ['method', 'Method'], ['linked', 'Linked']],
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
-            dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dashCur: '', dashH: 30, horizons: HORIZONS, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.1.0',
+            dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dashCur: '', dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.2.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
-            dueFilter: 'All', colors: COLOR,
+            dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
             loading: true, loadError: '', saveState: 'saved', isDesktop: true,
             _saveTimer: null, _toastTimer: null, _logTimer: null,
             money: fmtMoney, fmtDate: C.fmtDate, fmtAmt, parseAmt,
@@ -134,12 +137,14 @@
                     const sv = JSON.parse(store.get(LS_DASH) || 'null');
                     if (sv) {
                         this.dash = C.sanitizeSelection(sv.dash, C.todayISO()); this.dashCur = typeof sv.cur === 'string' ? sv.cur : '';
-                        if (HORIZONS.includes(Number(sv.h))) this.dashH = Number(sv.h);
+                        if (DUE_RANGES.some(r => r[0] === sv.dueRange)) this.dueRange = sv.dueRange;
+                        if (DUE_STATUS.includes(sv.dueStatus)) this.dueFilter = sv.dueStatus;
                         if (sv.bdMode === 'auto' || C.BREAKDOWN_MODES.includes(sv.bdMode)) this.bdMode = sv.bdMode;
                         if (sv.bdGroup === 'category' || sv.bdGroup === 'item') this.bdGroup = sv.bdGroup;
                     }
                 } catch (e) { }
-                ['dash', 'dashCur', 'dashH', 'bdMode', 'bdGroup'].forEach(k => this.$watch(k, () => this.saveDashPrefs()));
+                ['dash', 'dashCur', 'dueRange', 'dueFilter', 'bdMode', 'bdGroup'].forEach(k => this.$watch(k, () => this.saveDashPrefs()));
+                this.$watch('dueRange', () => { this.dueSel = []; }); this.$watch('dash', () => { this.dueSel = []; });
                 try {
                     const SQL = await getSQL();
                     const raw = store.get(LS_KEY);
@@ -160,14 +165,14 @@
                 } catch (e) { console.error(e); this.loadError = e.message || 'Failed to start the database.'; }
                 finally { this.loading = false; }
             },
-            saveDashPrefs() { store.set(LS_DASH, JSON.stringify({ dash: this.dash, cur: this.dashCur, h: this.dashH, bdMode: this.bdMode, bdGroup: this.bdGroup })); },
+            saveDashPrefs() { store.set(LS_DASH, JSON.stringify({ dash: this.dash, cur: this.dashCur, dueRange: this.dueRange, dueStatus: this.dueFilter, bdMode: this.bdMode, bdGroup: this.bdGroup })); },
             get draftCount() { return [this.commitments, this.expenseLogs, this.events].reduce((n, a) => n + a.filter(r => r._draft).length, 0); },
             loadDataFromDB() {
                 const R = t => C.rowsOf(db, `SELECT * FROM ${t} ORDER BY id`).map(clean);
                 this.commitments = R('commitments').map(r => ({ ...r, amount: C.toMoney(r.amount), dueDay: C.toInt(r.dueDay) ?? '', dueMonth: C.toInt(r.dueMonth) ?? '', pausedMonth: C.isMonthKey(r.pausedMonth) ? r.pausedMonth : '', archived: r.archived ? 1 : 0 }));
                 this.expenseLogs = R('expense_logs').map(r => ({ ...r, amount: C.toMoney(r.amount), commitmentId: C.toInt(r.commitmentId) ?? '' }));
                 this.events = R('events').map(r => ({ ...r, budget: C.toMoney(r.budget), done: r.done ? 1 : 0 }));
-                this.selectedRowIds = [];
+                this.selectedRowIds = []; this.lSel = []; this.dueSel = [];
                 this.loadSettings();
                 this.rev++;
                 this.refreshView(); this.refreshEvents();
@@ -357,7 +362,7 @@
                 if (s.status === 'Paused') return `paused for ${this.thisMonthLabel}` + (s.next ? ` · next ${C.fmtDate(s.next)}` : '');
                 if (s.status === 'Overdue') return `${s.missed.length} missed · since ${C.fmtDate(s.missed[0])}` + pz;
                 if (s.status === 'Completed') return s.total ? `${s.paidCount}/${s.total} paid` : 'Ended';
-                if (s.status === 'Upcoming') return s.next ? `first due ${C.fmtDate(s.next)}` : `starts ${C.fmtDate(c.startDate)}`;
+                if (s.status === 'Upcoming') return this.today < c.startDate ? (s.next ? `first due ${C.fmtDate(s.next)}` : `starts ${C.fmtDate(c.startDate)}`) : (s.next ? `next due ${C.fmtDate(s.next)}` : '');
                 return (s.next ? `next ${C.fmtDate(s.next)}` + (s.total ? ` · ${s.paidCount}/${s.total}` : '') : '') + pz;
             },
             // What the main pay button of a row offers. Paid / Completed -> "Mark pending" (undo), paused -> "Resume", else "Mark paid".
@@ -394,7 +399,7 @@
                 const f = this.f, q = f.search.toLowerCase().trim(), info = this.stInfo.map, arch = this.payView === 'archived';
                 const list = this.commitments.filter(c => !c._draft && C.isArchived(c) === arch &&
                     (!q || [c.name, c.notes, c.category].map(x => x || '').join(' ').toLowerCase().includes(q)) &&
-                    (f.frequency === 'All' || c.frequency === f.frequency) &&
+                    (f.frequency === 'All' || c.frequency === f.frequency) && (!this.payRangeOn || this.rangeDue(c).length > 0) &&
                     (f.currency === 'All' || c.currency === f.currency) && (arch || f.status === 'All' || (info[c.id] && info[c.id].status === f.status)));
                 const by = f.sortBy, nm = (a, b) => (a.name || '').localeCompare(b.name || '');
                 list.sort((a, b) => {
@@ -442,6 +447,8 @@
                 };
             },
             clearSelection() { this.selectedRowIds = []; },
+            daysTo(d) { return C.daysBetween(this.today, d); },
+            showNote(title, text) { this.note = { show: true, title: title || 'Note', text: String(text || '') }; },
             get selectedTotalsDisplay() { return this.fmtMap(this.sumBy(this.selectedItems)).replace(/\n/g, ' + '); },
             flash(id) { this.flashId = id; this.$nextTick(() => { const el = document.querySelector(`[data-row="${id}"]`); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }); setTimeout(() => { if (this.flashId === id) this.flashId = null; }, 2200); },
 
@@ -455,7 +462,7 @@
             arrOf(k) { return k === 'c' ? 'commitments' : k === 'l' ? 'expenseLogs' : 'events'; },
             // Desktop: inline draft pinned on top (never sorted). Mobile: full-screen form, row is created on Save.
             addRow(k) {
-                if (k === 'c') { this.f = { search: '', frequency: 'All', currency: 'All', status: 'All', sortBy: this.f.sortBy }; this.setPayView('active'); }
+                if (k === 'c') { this.f = { search: '', frequency: 'All', currency: 'All', status: 'All', sortBy: this.f.sortBy, dueFrom: '', dueTo: '' }; this.setPayView('active'); }
                 if (!this.isDesktop) { this.openModal(k, this.blank(k), true); return; }
                 const arr = this[this.arrOf(k)], o = { id: this.newId(arr), ...this.blank(k), _draft: true };
                 arr.unshift(o);
@@ -485,6 +492,7 @@
                 if (!confirm(`Delete "${label || 'this row'}"?${extra}`)) return false;
                 if (k === 'c') { this.expenseLogs.forEach(l => { if (Number(l.commitmentId) === Number(o.id)) l.commitmentId = ''; }); this.selectedRowIds = this.selectedRowIds.filter(i => Number(i) !== Number(o.id)); }
                 const key = this.arrOf(k); this[key] = this[key].filter(x => x.id !== o.id);
+                if (k === 'l') this.lSel = this.lSel.filter(i => i !== Number(o.id));
                 this.rev++;
                 const ops = [opDel(TABLE[k], o.id)];
                 if (k === 'c') ops.push(['UPDATE expense_logs SET commitmentId = NULL WHERE commitmentId = ?', [Number(o.id)]]);
@@ -637,6 +645,20 @@
                 const rest = this.lView.ids.filter(id => !drafts.includes(id));
                 return [...drafts.reverse(), ...rest].map(id => m.get(id)).filter(Boolean);
             },
+            lIsSel(l) { return this.lSel.includes(Number(l.id)); },
+            lToggle(l) { if (l._draft) return; const id = Number(l.id); this.lSel = this.lSel.includes(id) ? this.lSel.filter(x => x !== id) : [...this.lSel, id]; },
+            get lPageSaved() { return this.lRows.filter(l => !l._draft); },
+            get lAllSel() { const r = this.lPageSaved; return r.length > 0 && r.every(l => this.lIsSel(l)); },
+            lToggleAll() { const ids = this.lPageSaved.map(l => Number(l.id)); this.lSel = this.lAllSel ? this.lSel.filter(i => !ids.includes(i)) : [...new Set([...this.lSel, ...ids])]; },
+            get lSelItems() { const s = new Set(this.lSel); return this.expenseLogs.filter(l => !l._draft && s.has(Number(l.id))); },
+            get lSelTotals() { return this.fmtMap(this.sumBy(this.lSelItems)).replace(/\n/g, ' + '); },
+            deleteSelectedLogs() {
+                const items = this.lSelItems; if (!items.length) return;
+                if (!confirm(`Delete ${items.length} expense row(s)?` + (items.some(l => l.commitmentId) ? '\nLinked payments become unpaid again.' : ''))) return;
+                const ids = new Set(items.map(l => l.id));
+                this.expenseLogs = this.expenseLogs.filter(l => !ids.has(l.id)); this.lSel = []; this.rev++;
+                if (this.save([...ids].map(id => opDel('expense_logs', id)))) { this.runLogQuery(); this.showToast(`Deleted ${ids.size} expense row(s).`); }
+            },
             get lDrafts() { return this.expenseLogs.filter(l => l._draft).length; },
             lNo(i) { return i < this.lDrafts ? '•' : this.lPage * (Number(this.lPageSize) || 25) + (i - this.lDrafts) + 1; },
             get lPages() { return Math.max(1, Math.ceil(this.lView.total / (Number(this.lPageSize) || 25))); },
@@ -648,7 +670,22 @@
             },
             resetLogFilters() { this.lf = BLANK_LF(); this.ls = [{ col: 'actualDate', dir: 'desc' }, { col: 'amount', dir: 'desc' }, { col: '', dir: 'asc' }]; },
             get activeLogFilters() { const f = this.lf; return ['q', 'actualFrom', 'actualTo', 'commitFrom', 'commitTo', 'minAmt', 'maxAmt'].filter(k => f[k] !== '').length + ['category', 'currency', 'method'].filter(k => f[k] !== 'All').length + (f.link !== 'any' ? 1 : 0); },
-            get activePayFilters() { const f = this.f; return (f.search.trim() ? 1 : 0) + ['frequency', 'currency', 'status'].filter(k => f[k] !== 'All').length; },
+            get activePayFilters() { const f = this.f; return (f.search.trim() ? 1 : 0) + ['frequency', 'currency', 'status'].filter(k => f[k] !== 'All').length + (this.payRangeOn ? 1 : 0); },
+            // Pay filter "due between": a commitment matches when one of its real due dates (any frequency) falls in the range.
+            get payRange() { const f = this.f, a = C.validISO(f.dueFrom) ? f.dueFrom : '', b = C.validISO(f.dueTo) ? f.dueTo : ''; return { from: a, to: b, bad: !!(a && b && b < a) }; },
+            get payRangeOn() { const r = this.payRange; return !r.bad && !!(r.from || r.to); },
+            rangeDue(c) { const r = this.payRange; return C.occurrencesOf(c, r.from || '1990-01-01', r.to || '2100-12-31'); },
+            get payRangeInfo() {
+                if (!this.payRangeOn) return null;
+                const m = {}; let n = 0;
+                this.cRows.forEach(c => { if (c._draft) return; const d = this.rangeDue(c).length; n += d; if (d) C.addTo(m, c.currency || 'AED', C.toMoney(c.amount) * d); });
+                return { n, total: m };
+            },
+            setPayRange(kind) {        // quick presets
+                const t = this.today, [y, m] = C.ymd(t), nx = C.addMonths(y, m, 1);
+                const r = { month: [C.monthStart(y, m), C.monthEnd(y, m)], next: [C.monthStart(...nx), C.monthEnd(...nx)], rest: [t, C.monthEnd(y, m)], year: [C.iso(y, 1, 1), C.iso(y, 12, 31)], clear: ['', ''] }[kind];
+                if (r) this.f = { ...this.f, dueFrom: r[0], dueTo: r[1] };
+            },
             commitmentName(id) { const c = this.commitments.find(x => Number(x.id) === Number(id)); return c ? c.name : ''; },
             dueDatesOf(id) {       // due dates offered when linking a log to a commitment (around today)
                 const c = this.commitments.find(x => Number(x.id) === Number(id)); if (!c) return [];
@@ -701,13 +738,6 @@
 
             // Overdue commitments (current state, independent of the selected window)
             get overdueList() { return this.memo('od', '', () => this.liveC.filter(c => this.st(c).status === 'Overdue').map(c => ({ c, s: this.st(c) }))); },
-            // Everything still unpaid in the next N days (N = horizon chosen on the card; paused this month / archived are left out)
-            get next30() {
-                return this.memo('n30', String(this.dashH), () => {
-                    const t = this.today, a = C.analyze(this.liveC, this.liveL, { start: t, end: C.addDays(t, Number(this.dashH) || 30), months: [] }, t);
-                    return { items: a.occ.filter(o => !o.paid).map(o => ({ ...o, days: C.daysBetween(t, o.date) })), total: a.outstanding, paused: a.pausedTotal, pausedCount: a.pausedOcc.length };
-                });
-            },
             // Fixed-term commitments (loans, EMIs, instalments): progress and what is left to pay
             get fixedTerm() {
                 return this.memo('ft', '', () => {
@@ -743,12 +773,53 @@
                 if (row && !row.folded) { if (this.bdGroup === 'category' && o.category.includes(row.cat)) f.category = row.cat; else if (this.bdGroup === 'item') f.q = row.cat; }
                 this.lf = f; this.tab = 'log';
             },
-            // Due dates in the window, with a status filter (paused ones are listed but not counted in the totals)
+            /* ---- "Due dates & still to pay": one list for the dashboard window OR a period from today, with status chips,
+             *      filters (search / category / commitment / amount / overdue) and totals of what is shown and of the ticked rows. */
             dueState(o) { return o.paused ? 'Paused' : o.paid ? 'Paid' : o.overdue ? 'Overdue' : 'Pending'; },
-            get dueAll() { return this.memo('da', JSON.stringify(this.dash), () => this.an.pausedOcc.length ? [...this.an.occ, ...this.an.pausedOcc].sort((a, b) => a.date.localeCompare(b.date) || String(a.c.name).localeCompare(String(b.c.name))) : this.an.occ); },
-            get dueCounts() { const m = { All: this.dueAll.length, Overdue: 0, Pending: 0, Paid: 0, Paused: 0 }; this.dueAll.forEach(o => { m[this.dueState(o)]++; }); return m; },
-            get dueKeys() { return stable('dk', this.dueCounts.Paused ? ['All', 'Overdue', 'Pending', 'Paid', 'Paused'] : ['All', 'Overdue', 'Pending', 'Paid']); },
-            get dueRows() { return this.dueFilter === 'All' ? this.dueAll : this.dueAll.filter(o => this.dueState(o) === this.dueFilter); },
+            get dueSpan() {
+                const t = this.today, r = this.dueRange;
+                if (r === 'window') return { start: this.win.start, end: this.win.end, label: this.win.label };
+                const end = r === 'month' ? C.monthEnd(...C.ymd(t).slice(0, 2)) : C.addDays(t, Number(r.slice(1)) || 30);
+                return { start: t, end, label: (r === 'month' ? 'Today → end of this month' : 'Next ' + r.slice(1) + ' days') + ` (${C.fmtDate(t)} – ${C.fmtDate(end)})` };
+            },
+            get dueBase() {
+                return this.memo('db', JSON.stringify(this.dash) + this.dueRange + this.dueF.overdue, () => {
+                    const t = this.today, sp = this.dueSpan, byDate = (a, b) => a.date.localeCompare(b.date) || String(a.c.name).localeCompare(String(b.c.name));
+                    if (this.dueRange === 'window') return this.an.pausedOcc.length ? [...this.an.occ, ...this.an.pausedOcc].sort(byDate) : this.an.occ;
+                    // from today; optionally also every unpaid date before today (overdue money is still to pay)
+                    const a = C.analyze(this.liveC, this.liveL, { start: this.dueF.overdue ? '1990-01-01' : t, end: sp.end, months: [] }, t);
+                    return [...a.occ, ...a.pausedOcc].filter(o => o.date >= t || (this.dueF.overdue && !o.paid)).sort(byDate);
+                });
+            },
+            dueMatch(o) {      // every filter except the status chip
+                const f = this.dueF, q = f.q.trim().toLowerCase(), min = parseAmt(f.min), max = parseAmt(f.max);
+                return (!q || [o.c.name, o.c.category, o.c.notes].join(' ').toLowerCase().includes(q)) && (f.cat === 'All' || (o.c.category || '') === f.cat) &&
+                    (f.cid === 'All' || Number(o.id) === Number(f.cid)) && (typeof min !== 'number' || o.amount >= min) && (typeof max !== 'number' || o.amount <= max);
+            },
+            statusIs(o, k) { const st = this.dueState(o); return k === 'All' || st === k || (k === 'Unpaid' && (st === 'Overdue' || st === 'Pending')); },
+            get dueMatched() { return this.dueBase.filter(o => this.dueMatch(o)); },
+            get dueCounts() { const m = {}; DUE_STATUS.forEach(k => { m[k] = this.dueMatched.filter(o => this.statusIs(o, k)).length; }); return m; },
+            get dueKeys() { return stable('dk', DUE_STATUS.filter(k => k !== 'Paused' || this.dueCounts.Paused)); },
+            get dueRows() { return this.dueMatched.filter(o => this.statusIs(o, this.dueFilter)); },
+            get dueAll() { return this.dueBase; },
+            get dueOptions() {
+                return this.memo('do', JSON.stringify(this.dash) + this.dueRange + this.dueF.overdue, () => {
+                    const cats = new Set(), cms = new Map();
+                    this.dueBase.forEach(o => { cats.add(o.c.category || ''); cms.set(o.id, o.c.name || 'Unnamed'); });
+                    return { cats: stable('doc', [...cats].sort()), commitments: stable('docm', [...cms].sort((a, b) => a[1].localeCompare(b[1]))) };
+                });
+            },
+            get activeDueFilters() { const f = this.dueF; return (f.q.trim() ? 1 : 0) + (f.cat !== 'All') + (f.cid !== 'All') + (f.min !== '') + (f.max !== '') + (f.overdue ? 1 : 0); },
+            resetDueFilters() { this.dueF = BLANK_DUEF(); },
+            dueKey(o) { return o.id + '|' + o.date; },
+            dueIsSel(o) { return this.dueSel.includes(this.dueKey(o)); },
+            dueToggle(o) { const k = this.dueKey(o); this.dueSel = this.dueSel.includes(k) ? this.dueSel.filter(x => x !== k) : [...this.dueSel, k]; },
+            get dueAllSel() { const r = this.dueRows.slice(0, 150); return r.length > 0 && r.every(o => this.dueIsSel(o)); },
+            dueToggleAll() { const keys = this.dueRows.slice(0, 150).map(o => this.dueKey(o)); this.dueSel = this.dueAllSel ? this.dueSel.filter(k => !keys.includes(k)) : [...new Set([...this.dueSel, ...keys])]; },
+            get dueTotals() {      // shown rows (paused ones are listed but never counted) and ticked rows
+                const shown = this.dueRows.filter(o => !o.paused), sel = shown.filter(o => this.dueIsSel(o));
+                return { shown: this.sumBy(shown), shownN: shown.length, sel: this.sumBy(sel), selN: sel.length, paused: this.sumBy(this.dueRows.filter(o => o.paused)) };
+            },
             reviewPaused() { this.tab = 'pay'; this.setPayView('active'); this.f = { ...this.f, status: 'Paused' }; },
             get paidPct() { return this.an.occ.length ? Math.round((this.an.paidCount / this.an.occ.length) * 100) : 0; },
             get barRows() { return this.an.perMonth; },

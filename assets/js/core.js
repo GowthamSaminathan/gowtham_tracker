@@ -93,7 +93,8 @@
 
     /* Derived status - never stored.
      *  Archived  : moved to the archive (excluded from every calculation until restored)
-     *  Upcoming  : today < startDate
+     *  Upcoming  : today < startDate, or nothing overdue and no due date in the current month (e.g. a Yearly
+     *              commitment due in another month, the off-month of a Bi-Monthly one, a One-Time due later)
      *  Overdue   : at least one due date before today (inside start..end) has no linked payment (paused-month dates excluded)
      *  Completed : has an endDate and EVERY due date in start..end is paid (or the range has no due dates and has ended)
      *  Paused    : paused for the current month and this month still has an unpaid due date
@@ -118,6 +119,7 @@
         if (finite && ((occ.length && occ.every(isPaid)) || (!occ.length && c.endDate < today))) return { ...r, status: 'Completed' };
         if (pausedDue.length) return { ...r, status: 'Paused' };
         if (thisMonth.length && thisMonth.every(isPaid)) return { ...r, status: 'Paid' };
+        if (!thisMonth.length) return { ...r, status: 'Upcoming' };          // nothing due this month: next due date is in a later month
         return r;
     }
     // Which due date should "Mark paid" settle? oldest missed one, else this month's, else the next upcoming one.
