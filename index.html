@@ -31,22 +31,22 @@
 <body class="min-h-full flex flex-col font-sans bg-slate-950 text-slate-100 antialiased selection:bg-sky-500 selection:text-white" x-data="trackerApp()" x-init="initDB()">
     <div class="contents">
     <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 shadow-lg">
-        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-            <div class="flex items-center space-x-3">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black shadow-md shadow-sky-500/20">
+        <div class="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2 sm:gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-tr from-sky-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black shadow-md shadow-sky-500/20">
                     <i class="fa-solid fa-vault text-lg"></i>
                 </div>
-                <div>
-                    <h1 class="text-base font-bold tracking-tight text-white flex items-center gap-2">
-                        Gowtham Schedules & Pay
-                        <span class="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">v4.0</span>
+                <div class="min-w-0">
+                    <h1 class="text-base font-bold tracking-tight text-white flex items-center gap-2 min-w-0">
+                        <span class="truncate">Gowtham Schedules & Pay</span>
+                        <span class="shrink-0 text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">v4.1</span>
                     </h1>
-                    <p class="text-xs text-slate-400"><span class="hidden sm:inline">Unified SQLite Engine • </span><span :class="saveState === 'error' ? 'text-red-400' : saveState === 'dirty' ? 'text-amber-400' : 'text-emerald-400'" x-text="saveLabel"></span></p>
+                    <p class="text-xs text-slate-400 truncate"><span class="hidden sm:inline">Unified SQLite Engine • </span><span :class="saveState === 'error' ? 'text-red-400' : saveState === 'dirty' ? 'text-amber-400' : 'text-emerald-400'" x-text="saveLabel"></span></p>
                 </div>
             </div>
 
             <!-- Desktop Nav -->
-            <nav class="hidden md:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+            <nav class="hidden lg:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
                 <button @click="tab = 'dashboard'" :class="tab === 'dashboard' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
                     <i class="fa-solid fa-chart-pie"></i> Dashboard
                 </button>
@@ -62,7 +62,7 @@
             </nav>
 
             <!-- Export / Import -->
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <button @click="exportSQLite()" title="Export SQLite DB" class="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
                     <i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Export DB</span>
                 </button>
@@ -79,7 +79,7 @@
     <datalist id="catList"><template x-for="c in categoryOptions" :key="c"><option :value="c"></option></template></datalist>
     <datalist id="methodList"><template x-for="c in methodOptions" :key="c"><option :value="c"></option></template></datalist>
 
-    <main @input="onEdit($event)" @change="onEdit($event)" class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 mb-20 md:mb-6 overflow-x-hidden">
+    <main @input="onEdit($event)" @change="onEdit($event)" class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 mb-20 lg:mb-6 overflow-x-hidden">
 
         <p x-show="loading" class="text-center text-xs text-slate-400 py-6">Loading database…</p>
         <div x-show="loadError" style="display:none" class="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 mb-4 text-xs text-red-300 flex items-center justify-between gap-3">
@@ -88,25 +88,12 @@
         </div>
 
         <!-- ======================= DASHBOARD ======================= -->
-        <div x-show="tab === 'dashboard'" class="space-y-4">
-
-            <template x-if="migration">
-                <div class="bg-emerald-950/30 border border-emerald-700/50 rounded-2xl p-4 text-xs text-emerald-200 space-y-1.5" role="status">
-                    <div class="flex justify-between gap-3">
-                        <p class="font-bold text-sm"><i class="fa-solid fa-circle-check mr-1"></i> Database upgraded to schema v4</p>
-                        <button @click="migration = null" aria-label="Dismiss" class="text-emerald-300 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
-                    </div>
-                    <p x-text="`${migration.counts.commitments} commitment(s), ${migration.counts.expenseLogs} expense log row(s) and ${migration.counts.events} event(s) were carried over. ${migration.linkedPayments} old “Paid” flag(s) became linked payments.`"></p>
-                    <p>Commitments start on the 1st of the month they were last paid or this month (recurring ones are open-ended); One-Time items use their old due date as start and end.</p>
-                    <template x-for="n in migration.notes" :key="n"><p class="text-amber-300" x-text="'⚠ ' + n"></p></template>
-                    <button x-show="migration.backupKept" @click="downloadPreUpgradeBackup()" class="btn btn-ghost mt-1"><i class="fa-solid fa-download"></i> Download pre-upgrade backup</button>
-                </div>
-            </template>
+        <template x-if="tab === 'dashboard'"><div class="space-y-4">
 
             <template x-if="!loading && !commitments.length && !expenseLogs.length && !events.length">
                 <div class="bg-sky-950/40 border border-sky-800/60 rounded-2xl p-5 text-center space-y-3">
                     <p class="text-sm font-bold text-white">Welcome! Your tracker is empty.</p>
-                    <p class="text-xs text-slate-300">Add your first commitment, or import an existing database (older versions are upgraded automatically).</p>
+                    <p class="text-xs text-slate-300">Add your first commitment, or import your v4 database file with <b>Import DB</b> in the header.</p>
                     <button @click="tab = 'pay'; addRow('c')" class="btn btn-sky"><i class="fa-solid fa-plus"></i> Add first commitment</button>
                 </div>
             </template>
@@ -115,10 +102,16 @@
             <div class="card p-4 space-y-3" data-nosave>
                 <div class="flex flex-wrap items-end gap-3">
                     <div><label class="lbl" for="dMode">Time window</label>
-                        <select id="dMode" x-model="dash.mode" class="inp w-auto">
-                            <option value="this">This month</option><option value="next">Next month</option><option value="last">Last month</option>
-                            <option value="months">Selected month(s)</option><option value="year">Selected year</option>
-                        </select></div>
+                        <div class="flex items-center gap-1">
+                            <button @click="stepWindow(-1)" class="btn btn-ghost !px-2.5" aria-label="Previous period" title="Previous period"><i class="fa-solid fa-chevron-left"></i></button>
+                            <select id="dMode" x-model="dash.mode" class="inp w-auto">
+                                <option value="this">This month</option><option value="next">Next month</option><option value="last">Last month</option>
+                                <option value="last3">Last 3 months</option><option value="last6">Last 6 months</option><option value="next3">Next 3 months</option><option value="ytd">Year to date</option>
+                                <option value="months">Selected month(s)</option><option value="year">Selected year</option>
+                            </select>
+                            <button @click="stepWindow(1)" class="btn btn-ghost !px-2.5" aria-label="Next period" title="Next period"><i class="fa-solid fa-chevron-right"></i></button>
+                            <button x-show="!isThisMonth" @click="resetWindow()" class="btn btn-ghost" title="Back to this month"><i class="fa-solid fa-calendar-day"></i> <span class="hidden sm:inline">This month</span></button>
+                        </div></div>
                     <template x-if="dash.mode === 'months'">
                         <div class="flex flex-wrap items-end gap-3">
                             <div><span class="lbl">From</span><div class="flex gap-1">
@@ -133,7 +126,7 @@
                         <div><label class="lbl" for="dYear">Year</label>
                             <select id="dYear" x-model.number="dash.year" class="inp w-auto"><template x-for="y in yearOptions" :key="y"><option :value="y" :selected="y === dash.year" x-text="y"></option></template></select></div>
                     </template>
-                    <div><label class="lbl" for="dCur">Currency for charts</label>
+                    <div><label class="lbl" for="dCur">Currency (charts &amp; ranking)</label>
                         <select id="dCur" x-model="dashCur" class="inp w-auto"><template x-for="c in dashCurrencies" :key="c"><option :value="c" :selected="c === curSel" x-text="c"></option></template></select></div>
                 </div>
                 <p x-show="win.error" class="text-xs text-red-400" x-text="win.error + ' Showing the current month instead.'"></p>
@@ -143,63 +136,119 @@
             <!-- KPIs (per currency, never added across currencies) -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <div class="kpi"><p class="kpi-l">Required (obligations)</p><p class="kpi-v text-sky-400" x-text="fmtMap(an.required)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.occ.length + ' due date(s) from active commitments'"></p></div>
-                <div class="kpi"><p class="kpi-l">Paid toward obligations</p><p class="kpi-v text-emerald-400" x-text="fmtMap(an.paid)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.paidCount + ' of ' + an.occ.length + ' paid'"></p></div>
+                <div class="kpi"><p class="kpi-l">Paid toward obligations</p><p class="kpi-v text-emerald-400" x-text="fmtMap(an.paid)"></p>
+                    <div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden" role="progressbar" :aria-valuenow="paidPct" aria-valuemin="0" aria-valuemax="100" aria-label="Share of due dates paid"><div class="h-full rounded-full" :style="`width:${paidPct}%;background:${colors.obl}`"></div></div>
+                    <p class="text-[10px] text-slate-500 mt-1" x-text="an.paidCount + ' of ' + an.occ.length + ' paid (' + paidPct + '%)'"></p></div>
                 <div class="kpi"><p class="kpi-l">Outstanding</p><p class="kpi-v text-amber-400" x-text="fmtMap(an.outstanding)"></p><p class="text-[10px] text-red-400 mt-1 whitespace-pre-line" x-show="an.overdueCount" x-text="an.overdueCount + ' overdue: ' + fmtMap(an.overdue).replace(/\n/g, ' + ')"></p></div>
                 <div class="kpi"><p class="kpi-l">Actual spend (Expense Log)</p><p class="kpi-v text-purple-400" x-text="fmtMap(an.actual)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.logCount + ' log row(s)' + (spendDelta ? ' · ' + spendDelta : '')"></p></div>
+            </div>
+
+            <!-- Needs attention -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
+                <template x-if="overdueList.length">
+                    <div class="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-2">
+                        <h3 class="text-xs font-bold text-red-300 uppercase tracking-wider"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Overdue commitments <span class="font-normal" x-text="'(' + overdueList.length + ')'"></span></h3>
+                        <div class="max-h-56 overflow-y-auto space-y-1.5">
+                            <template x-for="o in overdueList" :key="o.c.id">
+                                <div class="flex items-center justify-between gap-3 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 text-xs">
+                                    <div class="min-w-0"><p class="font-semibold text-white truncate" x-text="o.c.name"></p><p class="text-red-300/80" x-text="statusSub(o.c)"></p></div>
+                                    <div class="text-right shrink-0"><p class="font-bold text-slate-100" x-text="money(o.c.amount, o.c.currency)"></p><button @click="markAsPaid(o.c)" class="text-[11px] text-emerald-400 hover:underline">Pay oldest</button></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+                <div class="card p-4 space-y-2" :class="overdueList.length ? '' : 'lg:col-span-2'">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-hourglass-half text-amber-400 mr-1"></i> Still to pay in the next 30 days</h3>
+                        <span class="text-xs font-semibold text-amber-300" x-text="next30.items.length ? fmtMap(next30.total).replace(/\n/g, ' + ') : ''"></span>
+                    </div>
+                    <p x-show="!next30.items.length" class="text-xs text-slate-500">Nothing left to pay in the next 30 days.</p>
+                    <div class="max-h-56 overflow-y-auto space-y-1.5">
+                        <template x-for="o in next30.items" :key="o.id + '|' + o.date">
+                            <div class="flex items-center gap-2 text-xs bg-slate-950/50 rounded-xl px-2.5 py-1.5 border border-slate-800/70">
+                                <span class="text-slate-400 w-20 shrink-0" x-text="o.days === 0 ? 'Today' : o.days === 1 ? 'Tomorrow' : 'in ' + o.days + ' days'"></span>
+                                <span class="flex-1 truncate text-white" x-text="o.c.name"></span>
+                                <span class="text-slate-200 font-semibold tabular-nums" x-text="money(o.amount, o.currency)"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
             </div>
 
             <!-- Charts -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 <div class="card p-4">
-                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-column text-sky-400 mr-1"></i> Actual expenses vs upcoming obligations</h3>
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-column mr-1" :style="`color:${colors.obl}`"></i> Actual expenses vs upcoming obligations</h3>
                     <p class="text-[10px] text-slate-500 mb-2" x-text="'Per month · ' + curSel"></p>
-                    <div class="relative h-64"><canvas id="chBar" role="img" aria-label="Bar chart of actual expenses versus obligations per month"></canvas></div>
+                    <div class="relative h-64"><canvas id="chBar" role="img" :aria-label="'Bar chart of actual expenses versus obligations per month in ' + curSel"></canvas>
+                        <p x-show="!hasBarData" class="absolute inset-0 grid place-items-center text-xs text-slate-500 pointer-events-none text-center px-6" x-text="'No obligations or spend in ' + curSel + ' for this window.'"></p></div>
+                    <details class="mt-3 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-200">Show data as a table</summary>
+                        <div class="overflow-x-auto mt-2"><table class="w-full text-left"><thead class="text-[10px] uppercase text-slate-400"><tr><th class="py-1 pr-3">Month</th><th class="py-1 pr-3 text-right" x-text="'Obligations (' + curSel + ')'"></th><th class="py-1 text-right" x-text="'Actual (' + curSel + ')'"></th></tr></thead>
+                            <tbody><template x-for="m in barRows" :key="m.key"><tr class="border-t border-slate-800"><td class="py-1 pr-3 text-slate-300" x-text="m.label"></td><td class="py-1 pr-3 text-right tabular-nums" x-text="money(m.required[curSel] || 0)"></td><td class="py-1 text-right tabular-nums" x-text="money(m.actual[curSel] || 0)"></td></tr></template></tbody></table></div></details>
                 </div>
                 <div class="card p-4">
-                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-line text-emerald-400 mr-1"></i> Spend trend vs previous period</h3>
-                    <p class="text-[10px] text-slate-500 mb-2" x-text="(win.months.length === 1 ? 'Cumulative daily spend · ' : 'Monthly spend · ') + curSel"></p>
-                    <div class="relative h-64"><canvas id="chTrend" role="img" aria-label="Line chart comparing spend with the previous period"></canvas></div>
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-line mr-1" :style="`color:${colors.act}`"></i> Spend trend vs previous period</h3>
+                    <p class="text-[10px] text-slate-500 mb-2" x-text="(win.months.length === 1 ? 'Cumulative daily spend · ' : 'Monthly spend · ') + curSel + (spendDelta ? ' · ' + spendDelta : '')"></p>
+                    <div class="relative h-64"><canvas id="chTrend" role="img" :aria-label="'Line chart comparing spend in ' + curSel + ' with the previous period'"></canvas>
+                        <p x-show="!hasTrendData" class="absolute inset-0 grid place-items-center text-xs text-slate-500 pointer-events-none text-center px-6" x-text="'No spend in ' + curSel + ' in this or the previous period.'"></p></div>
+                    <details class="mt-3 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-200">Show totals</summary>
+                        <p class="mt-2 text-slate-300" x-text="win.label.replace(/ \(.*\)$/, '') + ': ' + money(trendData.curTotal, curSel) + '  ·  ' + prevWin.label + ': ' + money(trendData.prevTotal, curSel) + '  ·  change ' + (trendData.delta > 0 ? '+' : '') + money(trendData.delta, curSel)"></p></details>
                 </div>
             </div>
 
-            <!-- Overdue -->
-            <template x-if="overdueList.length">
-                <div class="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-2">
-                    <h3 class="text-xs font-bold text-red-300 uppercase tracking-wider"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Overdue commitments</h3>
-                    <template x-for="o in overdueList" :key="o.c.id">
-                        <div class="flex items-center justify-between gap-3 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 text-xs">
-                            <div class="min-w-0"><p class="font-semibold text-white truncate" x-text="o.c.name"></p><p class="text-red-300/80" x-text="statusSub(o.c)"></p></div>
-                            <div class="text-right shrink-0"><p class="font-bold text-slate-100" x-text="money(o.c.amount, o.c.currency)"></p><button @click="markAsPaid(o.c)" class="text-[11px] text-emerald-400 hover:underline">Pay oldest</button></div>
+            <!-- Where the money went + fixed-term progress -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div class="card p-4 space-y-3">
+                    <div><h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-ranking-star mr-1" :style="`color:${colors.act}`"></i> Where the money went</h3>
+                        <p class="text-[10px] text-slate-500" x-text="'Actual spend by category · ' + curSel + ' · total ' + money(catRank.total, curSel)"></p></div>
+                    <p x-show="!catRank.rows.length" class="text-xs text-slate-500" x-text="'Nothing logged in ' + curSel + ' in this window.'"></p>
+                    <template x-for="r in catRank.rows" :key="r.cat">
+                        <div class="text-xs" :title="r.count + ' expense row(s)'">
+                            <div class="flex justify-between gap-2"><span class="truncate text-slate-200" x-text="r.cat + (r.folded ? ' (' + r.folded + ' small categories)' : '')"></span><span class="text-slate-300 tabular-nums shrink-0" x-text="money(r.total, curSel) + ' · ' + Math.round(r.share * 100) + '%'"></span></div>
+                            <div class="mt-1 h-2 rounded-full bg-slate-800 overflow-hidden"><div class="h-full rounded-r-full" :style="`width:${Math.max(2, r.share * 100)}%;background:${colors.act}`"></div></div>
                         </div>
                     </template>
                 </div>
-            </template>
+                <div class="card p-4 space-y-3">
+                    <div class="flex flex-wrap items-start justify-between gap-2"><div><h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-bars-progress mr-1" :style="`color:${colors.obl}`"></i> Fixed-term commitments</h3>
+                        <p class="text-[10px] text-slate-500">Loans, EMIs and instalments that have an end date</p></div>
+                        <span class="text-xs font-semibold text-sky-300 text-right whitespace-pre-line" x-show="fixedTerm.active.length" x-text="'Left to pay\n' + fmtMap(fixedLeft)"></span></div>
+                    <p x-show="!fixedTerm.active.length" class="text-xs text-slate-500" x-text="fixedTerm.done ? 'All ' + fixedTerm.done + ' fixed-term commitment(s) are fully paid.' : 'Give a commitment an end date (a loan or EMI, for example) and its progress appears here.'"></p>
+                    <div class="max-h-72 overflow-y-auto space-y-3">
+                        <template x-for="x in fixedTerm.active" :key="x.c.id">
+                            <div class="text-xs">
+                                <div class="flex justify-between gap-2"><span class="truncate text-white font-medium" x-text="x.c.name"></span><span class="text-slate-300 tabular-nums shrink-0" x-text="money(x.leftAmt, x.c.currency) + ' left'"></span></div>
+                                <div class="mt-1 h-2 rounded-full bg-slate-800 overflow-hidden" role="progressbar" :aria-valuenow="x.pct" aria-valuemin="0" aria-valuemax="100" :aria-label="x.c.name + ' paid'"><div class="h-full rounded-r-full" :style="`width:${Math.max(x.pct, 2)}%;background:${colors.obl}`"></div></div>
+                                <p class="mt-1 text-[10px] text-slate-500" x-text="x.s.paidCount + ' of ' + x.s.total + ' paid (' + x.pct + '%) · ends ' + fmtDate(x.c.endDate) + (x.s.status === 'Overdue' ? ' · overdue' : '')"></p>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
 
-            <!-- Obligations in window -->
+            <!-- Due dates in window -->
             <div class="card p-4 space-y-2">
-                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-list-check text-sky-400 mr-1"></i> Due dates in this window</h3>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-list-check text-sky-400 mr-1"></i> Due dates in this window</h3>
+                    <div class="flex flex-wrap gap-1" role="group" aria-label="Filter by status" data-nosave>
+                        <template x-for="k in ['All', 'Overdue', 'Pending', 'Paid']" :key="k">
+                            <button @click="dueFilter = k" :aria-pressed="dueFilter === k" :class="dueFilter === k ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition" x-text="k + ' (' + dueCounts[k] + ')'"></button>
+                        </template>
+                    </div>
+                </div>
                 <p x-show="!an.occ.length" class="text-xs text-slate-500">No commitment has a due date inside this window (check each commitment's start / end dates).</p>
+                <p x-show="an.occ.length && !dueRows.length" class="text-xs text-slate-500">No due dates with this status in the window.</p>
                 <div class="max-h-72 overflow-y-auto space-y-1">
-                    <template x-for="(o, i) in an.occ.slice(0, 100)" :key="o.id + '|' + o.date">
+                    <template x-for="(o, i) in dueRows.slice(0, 150)" :key="o.id + '|' + o.date">
                         <div class="flex items-center gap-2 text-xs bg-slate-950/50 rounded-xl px-2.5 py-1.5 border border-slate-800/70">
-                            <span class="rowno" x-text="i + 1"></span>
-                            <span class="text-slate-400 w-24 shrink-0" x-text="fmtDate(o.date)"></span>
-                            <span class="flex-1 truncate text-white" x-text="o.c.name"></span>
-                            <span class="text-slate-200 font-semibold" x-text="money(o.amount, o.currency)"></span>
-                            <span class="badge" :class="o.paid ? 'bg-emerald-500/10 text-emerald-400' : o.overdue ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'" x-text="o.paid ? 'Paid' : o.overdue ? 'Overdue' : 'Pending'"></span>
+                            <span class="rowno shrink-0" x-text="i + 1"></span>
+                            <div class="flex-1 min-w-0"><p class="truncate text-white" x-text="o.c.name"></p><p class="text-[10px] text-slate-400" x-text="fmtDate(o.date)"></p></div>
+                            <div class="text-right shrink-0"><p class="text-slate-200 font-semibold tabular-nums" x-text="money(o.amount, o.currency)"></p><span class="badge" :class="o.paid ? 'bg-emerald-500/10 text-emerald-400' : o.overdue ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'" x-text="dueState(o)"></span></div>
                         </div>
                     </template>
                 </div>
-                <p x-show="an.occ.length > 100" class="text-[10px] text-slate-500" x-text="'Showing the first 100 of ' + an.occ.length"></p>
-            </div>
-
-            <!-- Category spend -->
-            <div class="card p-4 space-y-2">
-                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-chart-bar text-sky-400 mr-1"></i> Historical spend by category (selected window)</h3>
-                <p x-show="!categoryRows.length" class="text-xs text-slate-500">Nothing logged in this window.</p>
-                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                    <template x-for="r in categoryRows" :key="r.cat"><div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80"><p class="text-[10px] text-slate-400 uppercase truncate" x-text="r.cat"></p><p class="text-sm font-bold text-sky-400 mt-1 whitespace-pre-line break-words" x-text="fmtMap(r.totals)"></p></div></template>
-                </div>
+                <p x-show="dueRows.length > 150" class="text-[10px] text-slate-500" x-text="'Showing the first 150 of ' + dueRows.length"></p>
             </div>
 
             <!-- Upcoming events & tasks -->
@@ -207,16 +256,16 @@
                 <div class="card p-4 space-y-2">
                     <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-calendar-check text-amber-400 mr-1"></i> Upcoming events &amp; open tasks (45 days)</h3>
                     <template x-for="e in upcomingEvents" :key="e.id">
-                        <div class="flex justify-between gap-3 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
-                            <span class="text-white font-medium truncate"><span class="badge bg-slate-700/60 text-slate-300 mr-1" x-text="e.kind"></span><span x-text="e.title + ' · ' + fmtDate(e.date)"></span></span>
-                            <span class="text-right" :class="e.days < 0 ? 'text-red-400' : 'text-slate-400'" x-text="(e.days < 0 ? Math.abs(e.days) + ' day(s) overdue' : e.days === 0 ? 'Today' : 'in ' + e.days + ' day(s)') + (e.budget ? ' · ' + money(e.budget, e.currency) : '')"></span>
+                        <div class="flex flex-col sm:flex-row sm:justify-between gap-0.5 sm:gap-3 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+                            <span class="text-white font-medium sm:truncate"><span class="badge bg-slate-700/60 text-slate-300 mr-1" x-text="e.kind"></span><span x-text="e.title + ' · ' + fmtDate(e.date)"></span></span>
+                            <span class="sm:text-right" :class="e.days < 0 ? 'text-red-400' : 'text-slate-400'" x-text="(e.days < 0 ? Math.abs(e.days) + ' day(s) overdue' : e.days === 0 ? 'Today' : 'in ' + e.days + ' day(s)') + (e.budget ? ' · ' + money(e.budget, e.currency) : '')"></span>
                         </div>
                     </template>
                 </div>
             </template>
 
             <div class="flex justify-end"><button @click="clearAllData()" class="text-[11px] text-slate-500 hover:text-red-400 flex items-center gap-1.5"><i class="fa-solid fa-trash-can"></i> Clear all data</button></div>
-        </div>
+        </div></template>
 
         <!-- ======================= PAY COMMITMENTS ======================= -->
         <div x-show="tab === 'pay'" style="display:none" class="space-y-3">
@@ -272,43 +321,32 @@
             </div></template>
 
             <!-- Desktop: inline-editable table -->
-            <template x-if="isDesktop"><div class="card overflow-x-auto">
-                <table class="w-full text-xs min-w-[1250px]">
-                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr>
-                        <th class="th">#</th><th class="th"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected" data-nosave aria-label="Select all" class="rounded bg-slate-950 border-slate-700"></th>
-                        <th class="th">Commitment</th><th class="th">Region</th><th class="th">Category</th><th class="th">Amount</th><th class="th">Frequency</th><th class="th">Due</th>
-                        <th class="th">Start date</th><th class="th">End / due date</th><th class="th">Status</th><th class="th text-center">Actions</th></tr></thead>
-                    <tbody class="divide-y divide-slate-800/70">
+            <template x-if="isDesktop"><div class="card">
+                <table class="w-full table-fixed text-xs"><colgroup><col class="w-[4%]"><col class="w-[3%]"><col class="w-[17%]"><col class="w-[18%]"><col class="w-[16%]"><col class="w-[16%]"><col class="w-[11%]"><col class="w-[15%]"></colgroup><thead class="bg-slate-950/50 border-b border-slate-800"><tr>
+                        <th class="th !whitespace-normal">#</th><th class="th !whitespace-normal"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected" data-nosave aria-label="Select all" class="rounded bg-slate-950 border-slate-700"></th>
+                        <th class="th !whitespace-normal">Commitment / Category</th><th class="th !whitespace-normal">Amount / Region</th><th class="th !whitespace-normal">Frequency / Due</th><th class="th !whitespace-normal">Start / End date</th><th class="th !whitespace-normal">Status</th><th class="th !whitespace-normal text-center">Actions</th></tr></thead>
+<tbody class="divide-y divide-slate-800/70">
                         <template x-for="(item, i) in cRows" :key="item.id">
                             <tr :data-row="item.id" class="hover:bg-slate-800/30" :class="[item._draft ? 'bg-sky-950/30' : '', flashId === item.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
                                 <td class="td"><span class="rowno" x-text="i + 1"></span></td>
-                                <td class="td"><input type="checkbox" :value="item.id" x-model.number="selectedRowIds" data-nosave aria-label="Select row" class="rounded bg-slate-950 border-slate-700"></td>
-                                <td class="td min-w-[150px]"><input type="text" x-model="item.name" :class="bad('c', item, 'name')" placeholder="Name" aria-label="Name" class="inp"></td>
-                                <td class="td"><select x-model="item.region" aria-label="Region" class="inp w-20"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === item.region" x-text="r"></option></template></select></td>
-                                <td class="td"><input type="text" list="catList" x-model="item.category" aria-label="Category" class="inp w-28"></td>
-                                <td class="td"><div class="flex gap-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="item.amount" :class="bad('c', item, 'amount')" aria-label="Amount" class="inp w-24">
-                                    <select x-model="item.currency" aria-label="Currency" class="inp w-[4.5rem]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === item.currency" x-text="r"></option></template></select></div></td>
-                                <td class="td"><select x-model="item.frequency" @change="$nextTick(() => onFreqChange(item))" :class="bad('c', item, 'frequency')" aria-label="Frequency" class="inp w-28"><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === item.frequency" x-text="r"></option></template></select></td>
-                                <td class="td">
-                                    <template x-if="item.frequency === 'Monthly'"><select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="inp w-20"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></template>
+                                <td class="td"><input type="checkbox" :value="item.id" x-model.number="selectedRowIds" :disabled="item._draft" data-nosave aria-label="Select row" class="rounded bg-slate-950 border-slate-700 disabled:opacity-30"></td>
+                                <td class="td"><div class="space-y-1"><input type="text" x-model="item.name" :class="bad('c', item, 'name')" placeholder="Name" aria-label="Name" class="inp"><input type="text" list="catList" x-model="item.category" aria-label="Category" class="inp"></div></td>
+                                <td class="td"><div class="space-y-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="item.amount" :class="bad('c', item, 'amount')" aria-label="Amount" class="inp"><div class="flex gap-1"><select x-model="item.region" aria-label="Region" class="inp flex-[5]"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === item.region" x-text="r"></option></template></select><select x-model="item.currency" aria-label="Currency" class="inp flex-[4]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === item.currency" x-text="r"></option></template></select></div></div></td>
+                                <td class="td"><div class="space-y-1"><select x-model="item.frequency" @change="$nextTick(() => onFreqChange(item))" :class="bad('c', item, 'frequency')" aria-label="Frequency" class="inp"><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === item.frequency" x-text="r"></option></template></select><div><template x-if="item.frequency === 'Monthly'"><select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="inp"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></template>
                                     <template x-if="item.frequency === 'Yearly' || item.frequency === 'Bi-Monthly'"><div class="flex gap-1" :title="item.frequency === 'Bi-Monthly' ? 'First due month; repeats every 2 months' : 'Due once a year'">
-                                        <select x-model.number="item.dueMonth" @change="$nextTick(() => fixDay(item))" :class="bad('c', item, 'dueMonth')" aria-label="Due month" class="inp w-[4.5rem]"><option value="">Month</option><template x-for="(mn, k) in monthNames" :key="mn"><option :value="k + 1" :selected="k + 1 === Number(item.dueMonth)" x-text="mn"></option></template></select>
-                                        <select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="inp w-16"><option value="">Day</option><template x-for="d in dayList(item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></div></template>
-                                    <span x-show="item.frequency === 'One-Time'" class="text-slate-500">on end date →</span>
-                                </td>
-                                <td class="td"><input type="date" x-model="item.startDate" :class="bad('c', item, 'startDate')" aria-label="Start date" class="inp w-36"></td>
-                                <td class="td"><input type="date" x-model="item.endDate" :class="bad('c', item, 'endDate')" :aria-label="item.frequency === 'One-Time' ? 'Due date' : 'End date (optional)'" :title="item.frequency === 'One-Time' ? 'Due date' : 'End date - leave empty for ongoing'" class="inp w-36"></td>
-                                <td class="td whitespace-nowrap"><span class="badge" :class="statusClass(item)" x-text="st(item).status"></span>
+                                        <select x-model.number="item.dueMonth" @change="$nextTick(() => fixDay(item))" :class="bad('c', item, 'dueMonth')" aria-label="Due month" class="inp flex-[3]"><option value="">Month</option><template x-for="(mn, k) in monthNames" :key="mn"><option :value="k + 1" :selected="k + 1 === Number(item.dueMonth)" x-text="mn"></option></template></select>
+                                        <select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="inp flex-[2]"><option value="">Day</option><template x-for="d in dayList(item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></div></template>
+                                    <span x-show="item.frequency === 'One-Time'" class="text-slate-500">on end date →</span></div></div></td>
+                                <td class="td"><div class="space-y-1"><input type="date" x-model="item.startDate" :class="bad('c', item, 'startDate')" aria-label="Start date" class="inp"><input type="date" x-model="item.endDate" :class="bad('c', item, 'endDate')" :aria-label="item.frequency === 'One-Time' ? 'Due date' : 'End date (optional)'" :title="item.frequency === 'One-Time' ? 'Due date' : 'End date - leave empty for ongoing'" class="inp"></div></td>
+                                <td class="td"><span class="badge" :class="statusClass(item)" x-text="st(item).status"></span>
                                     <span x-show="errList('c', item).length" :title="errList('c', item).join(', ')" class="text-red-400 ml-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
                                     <p class="text-[10px] text-slate-500 mt-0.5" x-text="statusSub(item)"></p></td>
-                                <td class="td whitespace-nowrap text-center">
-                                    <template x-if="item._draft"><span><button @click="saveRow('c', item)" class="btn btn-sky !py-1" title="Save this row"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('c', item)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
+                                <td class="td"><div class="flex flex-wrap items-center justify-center gap-x-0.5"><template x-if="item._draft"><span><button @click="saveRow('c', item)" class="btn btn-sky !py-1" title="Save this row"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('c', item)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
                                     <template x-if="!item._draft"><span>
                                         <button @click="markAsPaid(item)" x-show="st(item).status !== 'Completed'" title="Mark next due date as paid" aria-label="Mark paid" class="text-emerald-400 hover:text-emerald-300 p-1.5"><i class="fa-solid fa-circle-check"></i></button>
                                         <button @click="markAsPending(item)" x-show="st(item).paidCount > 0" title="Undo last payment" aria-label="Undo last payment" class="text-slate-400 hover:text-white p-1.5"><i class="fa-solid fa-rotate-left"></i></button>
                                         <button @click="openModal('c', item)" title="Edit (notes, method…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1.5"><i class="fa-solid fa-pen"></i></button>
-                                        <button @click="deleteRow('c', item)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template>
-                                </td>
+                                        <button @click="deleteRow('c', item)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template></div></td>
                             </tr>
                         </template>
                     </tbody>
@@ -383,27 +421,19 @@
             </div></template>
 
             <!-- Desktop: inline-editable table -->
-            <template x-if="isDesktop"><div class="card overflow-x-auto">
-                <table class="w-full text-xs min-w-[1150px]">
-                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th">#</th><th class="th">Actual date</th><th class="th">Commitment date</th><th class="th">Linked commitment</th><th class="th">Description</th><th class="th">Category</th><th class="th">Region</th><th class="th">Amount</th><th class="th">Method</th><th class="th text-center">Actions</th></tr></thead>
-                    <tbody class="divide-y divide-slate-800/70">
+            <template x-if="isDesktop"><div class="card">
+                <table class="w-full table-fixed text-xs"><colgroup><col class="w-[4%]"><col class="w-[17%]"><col class="w-[29%]"><col class="w-[17%]"><col class="w-[20%]"><col class="w-[13%]"></colgroup><thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th !whitespace-normal">#</th><th class="th !whitespace-normal">Actual / Commitment date</th><th class="th !whitespace-normal">Description / Linked commitment</th><th class="th !whitespace-normal">Category / Method</th><th class="th !whitespace-normal">Amount / Region</th><th class="th !whitespace-normal text-center">Actions</th></tr></thead>
+<tbody class="divide-y divide-slate-800/70">
                         <template x-for="(l, i) in lRows" :key="l.id">
                             <tr :data-row="l.id" class="hover:bg-slate-800/30" :class="[l._draft ? 'bg-sky-950/30' : '', flashId === l.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
                                 <td class="td"><span class="rowno" x-text="lNo(i)"></span></td>
-                                <td class="td"><input type="date" x-model="l.actualDate" :class="bad('l', l, 'actualDate')" aria-label="Actual date" class="inp w-36"></td>
-                                <td class="td"><input type="date" x-model="l.commitmentDate" :class="bad('l', l, 'commitmentDate')" aria-label="Commitment date" class="inp w-36"></td>
-                                <td class="td"><select x-model.number="l.commitmentId" @change="$nextTick(() => onLinkChange(l))" :class="bad('l', l, 'commitmentId')" aria-label="Linked commitment" class="inp w-40"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(l.commitmentId)" x-text="c.name"></option></template></select></td>
-                                <td class="td min-w-[150px]"><input type="text" x-model="l.item" :class="bad('l', l, 'item')" aria-label="Description" class="inp"></td>
-                                <td class="td"><input type="text" list="catList" x-model="l.category" aria-label="Category" class="inp w-28"></td>
-                                <td class="td"><select x-model="l.region" aria-label="Region" class="inp w-20"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === l.region" x-text="r"></option></template></select></td>
-                                <td class="td"><div class="flex gap-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="l.amount" :class="bad('l', l, 'amount')" aria-label="Amount" class="inp w-24">
-                                    <select x-model="l.currency" aria-label="Currency" class="inp w-[4.5rem]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === l.currency" x-text="r"></option></template></select></div></td>
-                                <td class="td"><input type="text" list="methodList" x-model="l.method" aria-label="Method" class="inp w-28"></td>
-                                <td class="td whitespace-nowrap text-center">
-                                    <span x-show="errList('l', l).length" :title="errList('l', l).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                <td class="td"><div class="space-y-1"><input type="date" x-model="l.actualDate" :class="bad('l', l, 'actualDate')" aria-label="Actual date" class="inp"><input type="date" x-model="l.commitmentDate" :class="bad('l', l, 'commitmentDate')" aria-label="Commitment date" class="inp"></div></td>
+                                <td class="td"><div class="space-y-1"><input type="text" x-model="l.item" :class="bad('l', l, 'item')" aria-label="Description" class="inp"><select x-model.number="l.commitmentId" @change="$nextTick(() => onLinkChange(l))" :class="bad('l', l, 'commitmentId')" aria-label="Linked commitment" class="inp"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(l.commitmentId)" x-text="c.name"></option></template></select></div></td>
+                                <td class="td"><div class="space-y-1"><input type="text" list="catList" x-model="l.category" aria-label="Category" class="inp"><input type="text" list="methodList" x-model="l.method" aria-label="Method" class="inp"></div></td>
+                                <td class="td"><div class="space-y-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="l.amount" :class="bad('l', l, 'amount')" aria-label="Amount" class="inp"><div class="flex gap-1"><select x-model="l.region" aria-label="Region" class="inp flex-[5]"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === l.region" x-text="r"></option></template></select><select x-model="l.currency" aria-label="Currency" class="inp flex-[4]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === l.currency" x-text="r"></option></template></select></div></div></td>
+                                <td class="td"><div class="flex flex-wrap items-center justify-center gap-x-0.5"><span x-show="errList('l', l).length" :title="errList('l', l).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
                                     <template x-if="l._draft"><span><button @click="saveRow('l', l)" class="btn btn-sky !py-1"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('l', l)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
-                                    <template x-if="!l._draft"><span><button @click="openModal('l', l)" title="Edit (notes…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1.5"><i class="fa-solid fa-pen"></i></button><button @click="deleteRow('l', l)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template>
-                                </td>
+                                    <template x-if="!l._draft"><span><button @click="openModal('l', l)" title="Edit (notes…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1.5"><i class="fa-solid fa-pen"></i></button><button @click="deleteRow('l', l)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template></div></td>
                             </tr>
                         </template>
                     </tbody>
@@ -494,7 +524,7 @@
                                 <select x-model.number="modal.item.dueMonth" @change="$nextTick(() => fixDay(modal.item))" :class="bad('c', modal.item, 'dueMonth')" class="inp"><option value="">Month</option><template x-for="(mn, k) in monthNames" :key="mn"><option :value="k + 1" :selected="k + 1 === Number(modal.item.dueMonth)" x-text="mn"></option></template></select>
                                 <select x-model.number="modal.item.dueDay" :class="bad('c', modal.item, 'dueDay')" class="inp"><option value="">Day</option><template x-for="d in dayList(modal.item.dueMonth)" :key="d"><option :value="d" :selected="d === Number(modal.item.dueDay)" x-text="d"></option></template></select></div></div></template>
                         </div>
-                        <div><label class="lbl">Start date *</label><input type="date" x-model="modal.item.startDate" :class="bad('c', modal.item, 'startDate')" class="inp"></div>
+                        <div><label class="lbl">Start date *</label><input type="date" x-model="modal.item.startDate" :class="bad('c', modal.item, 'startDate')" class="inp"><p class="text-[10px] text-slate-500 mt-1">Due dates before this are not tracked.</p></div>
                         <div><label class="lbl" x-text="modal.item.frequency === 'One-Time' ? 'Due date *' : 'End date (empty = ongoing)'"></label><input type="date" x-model="modal.item.endDate" :class="bad('c', modal.item, 'endDate')" class="inp"></div>
                         <div class="col-span-2"><label class="lbl">Payment method</label><input type="text" list="methodList" x-model="modal.item.method" class="inp"></div>
                         <div class="col-span-2"><label class="lbl">Notes</label><textarea rows="2" x-model="modal.item.notes" class="inp"></textarea></div>
@@ -524,7 +554,7 @@
                     </div></template>
                 </div>
                 <div class="px-5 py-4 border-t border-slate-800 flex flex-wrap gap-2 justify-end">
-                    <button x-show="!modal.isNew" @click="deleteRow(modal.kind, modal.orig); closeModal()" class="btn btn-red mr-auto"><i class="fa-solid fa-trash"></i> Delete</button>
+                    <button x-show="!modal.isNew" @click="if (deleteRow(modal.kind, modal.orig)) closeModal()" class="btn btn-red mr-auto"><i class="fa-solid fa-trash"></i> Delete</button>
                     <button @click="closeModal()" class="btn btn-ghost">Cancel</button>
                     <button x-show="modal.kind === 'c'" @click="saveModal(true)" class="btn btn-em"><i class="fa-solid fa-check"></i> Save &amp; mark paid</button>
                     <button @click="saveModal(false)" class="btn btn-sky"><i class="fa-solid fa-floppy-disk"></i> <span x-text="modal.isNew ? 'Add' : 'Save changes'"></span></button>
@@ -537,13 +567,13 @@
     <div x-show="toast.show" style="display:none" role="status" aria-live="polite"
          x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0"
          x-transition:leave="transition ease-in duration-200 transform" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 translate-y-2"
-         class="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:max-w-sm z-[60] bg-slate-800/95 backdrop-blur-md border border-slate-700 rounded-2xl p-4 shadow-2xl flex items-center gap-3 text-sm text-slate-100">
+         class="fixed bottom-20 lg:bottom-6 left-4 right-4 lg:left-auto lg:max-w-sm z-[60] bg-slate-800/95 backdrop-blur-md border border-slate-700 rounded-2xl p-4 shadow-2xl flex items-center gap-3 text-sm text-slate-100">
         <div class="p-2 rounded-xl" :class="toast.type === 'error' ? 'bg-red-500/20 text-red-400' : toast.type === 'info' ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400'">
             <i class="fa-solid text-lg" :class="toast.type === 'error' ? 'fa-circle-exclamation' : toast.type === 'info' ? 'fa-circle-info' : 'fa-circle-check'"></i></div>
         <span x-text="toast.message" class="font-medium"></span>
     </div>
 
-    <nav id="bottomNav" aria-label="Primary" class="md:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 z-40 px-2 py-1.5 flex justify-around items-center">
+    <nav id="bottomNav" aria-label="Primary" class="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 z-40 px-2 py-1.5 flex justify-around items-center">
         <button @click="tab = 'dashboard'" :class="tab === 'dashboard' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
             <i class="fa-solid fa-chart-pie text-base mb-0.5"></i>
             <span>Dashboard</span>

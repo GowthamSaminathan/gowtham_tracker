@@ -1,8 +1,14 @@
-/* app.js - Alpine component. All date/status/SQL/migration logic lives in core.js (window.Core). */
+/* app.js - Alpine component. All date/status/SQL logic lives in core.js (window.Core). */
 (function () {
     'use strict';
     const C = window.Core;
-    const LS_KEY = 'sqlite_db_b64', LS_LEGACY = 'sqlite_db_binary', LS_BACKUP = 'sqlite_db_pre_v4_backup', LS_CORRUPT = 'sqlite_db_corrupt_backup';
+    const LS_KEY = 'sqlite_db_b64', LS_REJECTED = 'sqlite_db_rejected_backup', LS_DASH = 'tracker_dash_v1';
+    const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`; };   // local time, file-name safe
+    const COLOR = { obl: '#3987e5', act: '#d95926', prev: '#94a3b8' };     // validated pair: blue = obligations, orange = actual spend (same meaning everywhere)
+    const REUSE = {};                                                       // keeps the SAME array object while its contents are unchanged, so x-for lists do not re-render
+    const stable = (key, arr) => { const p = REUSE[key]; if (p && p.length === arr.length && p.every((v, i) => v === arr[i])) return p; return (REUSE[key] = arr); };
+    let chartCur = 'AED';                                                  // read by chart callbacks at draw time, so a currency change never leaves a stale label
+    const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
     let db = null, SQLMod = null;
     const MEMO = {}, CH = {};                       // memo cache + Chart.js instances (kept OUT of Alpine's reactive proxies)
 
@@ -46,7 +52,8 @@
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dashCur: '',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
-            toast: { show: false, message: '', type: 'success' }, migration: null,
+            toast: { show: false, message: '', type: 'success' },
+            dueFilter: 'All', colors: COLOR,
             loading: true, loadError: '', saveState: 'saved', isDesktop: true,
             _saveTimer: null, _toastTimer: null, _logTimer: null,
             money: fmtMoney, fmtDate: C.fmtDate,
@@ -55,7 +62,10 @@
             async initDB() {
                 if (window.matchMedia) { const mq = window.matchMedia('(min-width: 1024px)'); this.isDesktop = mq.matches; mq.addEventListener('change', e => { this.isDesktop = e.matches; }); }
                 document.addEventListener('visibilitychange', () => { if (!document.hidden) { this.clock = Date.now(); this.rev++; } });
-                window.addEventListener('beforeunload', () => { if (this.saveState === 'dirty' && db) this.persist({ toast: false }); });
+                window.addEventListener('beforeunload', e => {
+                    if (this.saveState === 'dirty' && db) this.persist({ toast: false });
+                    if (this.draftCount) { e.preventDefault(); e.returnValue = ''; }          // unsaved draft rows would be lost
+                });
                 this.$watch('f', () => this.refreshView());
                 this.$watch('ef', () => this.refreshEvents());
                 const rerun = () => { this.lPage = 0; clearTimeout(this._logTimer); this._logTimer = setTimeout(() => this.runLogQuery(), 250); };
@@ -63,46 +73,32 @@
                 this.$watch('lPageSize', rerun);
                 this.$watch('lPage', () => { clearTimeout(this._logTimer); this._logTimer = setTimeout(() => this.runLogQuery(), 30); });
                 this.$watch('chartKey', () => this.$nextTick(() => this.drawCharts()));
+                this.$watch('tab', t => { if (t !== 'dashboard') this.destroyCharts(); else setTimeout(() => this.drawCharts(), 40); });   // hidden dashboard does no work
+                // restore the last dashboard selection (validated; never trusted blindly)
+                try { const sv = JSON.parse(store.get(LS_DASH) || 'null'); if (sv) { this.dash = C.sanitizeSelection(sv.dash, C.todayISO()); this.dashCur = typeof sv.cur === 'string' ? sv.cur : ''; } } catch (e) { }
+                this.$watch('dash', () => this.saveDashPrefs()); this.$watch('dashCur', () => this.saveDashPrefs());
                 try {
                     const SQL = await getSQL();
-                    const b64 = store.get(LS_KEY), legacy = store.get(LS_LEGACY), raw = b64 || legacy;
+                    const raw = store.get(LS_KEY);
                     let opened = false;
                     if (raw) {
-                        try {
-                            db = new SQL.Database(b64 ? fromB64(b64) : new Uint8Array(JSON.parse(legacy)));
-                            this.upgradeCurrentDb();
-                            opened = true;
-                        } catch (e) {
-                            console.error('Saved database unreadable:', e);
-                            store.set(LS_CORRUPT, raw);
-                            this.showToast('Saved data was unreadable. A backup copy was kept and a fresh database was started.', 'error');
+                        try { db = new SQL.Database(fromB64(raw)); C.ensureSchema(db); opened = true; }
+                        catch (e) {
+                            console.error('Saved database rejected:', e);
+                            store.set(LS_REJECTED, raw);                       // kept, never deleted
+                            this.showToast(e.code === 'OLD_SCHEMA' ? 'The data saved in this browser is from an older version, so it was set aside (not deleted). Import your v4 .db file to continue.' : 'Saved data could not be opened. A backup copy was kept and a fresh database was started.', 'error');
                             db = null;
                         }
                     }
-                    if (!opened) { db = new SQL.Database(); C.ensureLatest(db, C.todayISO()); }   // first run: completely empty
+                    if (!opened) { db = new SQL.Database(); C.ensureSchema(db); }   // first run: completely empty
                     this.loadDataFromDB();
-                    const saved = this.persist({ toast: false });
-                    if (saved && !b64 && legacy) store.del(LS_LEGACY);
+                    this.persist({ toast: false });
                     this.runLogQuery();
                 } catch (e) { console.error(e); this.loadError = e.message || 'Failed to start the database.'; }
                 finally { this.loading = false; }
             },
-            // Upgrades the open database to the newest schema. A copy of the original is kept in localStorage first.
-            upgradeCurrentDb() {
-                let pre = null;
-                try { if (C.getVersion(db) < C.SCHEMA_VERSION && C.listTables(db).length) pre = toB64(db.export()); } catch (e) { }
-                const rep = C.ensureLatest(db, C.todayISO());
-                if (rep.migrated) {
-                    const kept = pre ? store.set(LS_BACKUP, pre) : false;
-                    this.migration = { ...rep, backupKept: kept };
-                }
-                return rep;
-            },
-            downloadPreUpgradeBackup() {
-                const b = store.get(LS_BACKUP);
-                if (!b) { this.showToast('No pre-upgrade backup is stored in this browser.', 'info'); return; }
-                download(new Blob([fromB64(b)], { type: 'application/x-sqlite3' }), 'tracker_before_upgrade_' + C.todayISO() + '.db');
-            },
+            saveDashPrefs() { store.set(LS_DASH, JSON.stringify({ dash: this.dash, cur: this.dashCur })); },
+            get draftCount() { return [this.commitments, this.expenseLogs, this.events].reduce((n, a) => n + a.filter(r => r._draft).length, 0); },
             loadDataFromDB() {
                 const R = t => C.rowsOf(db, `SELECT * FROM ${t} ORDER BY id`).map(clean);
                 this.commitments = R('commitments').map(r => ({ ...r, amount: C.toMoney(r.amount), dueDay: C.toInt(r.dueDay) ?? '', dueMonth: C.toInt(r.dueMonth) ?? '' }));
@@ -169,23 +165,25 @@
             errList(k, o) { return Object.values(this.errs(k, o)); },
             bad(k, o, f) { return this.errs(k, o)[f] ? '!border-red-500 ring-1 ring-red-500' : ''; },
             dayList(m) { const n = C.toInt(m) ? C.daysInMonth(2024, C.toInt(m)) : 31; return Array.from({ length: n }, (_, i) => i + 1); },
-            fixDay(o) { const m = C.toInt(o.dueMonth), d = C.toInt(o.dueDay); if (m && d && d > C.daysInMonth(2024, m)) o.dueDay = C.daysInMonth(2024, m); },
+            fixDay(o) { const m = C.toInt(o.dueMonth), d = C.toInt(o.dueDay); if (m && d && d > C.daysInMonth(2024, m)) { o.dueDay = C.daysInMonth(2024, m); this.rev++; } },
             onFreqChange(o) {
                 const [, sm, sd] = C.validISO(o.startDate) ? C.ymd(o.startDate) : [0, '', ''];
                 if (o.frequency === 'Monthly') { o.dueMonth = ''; if (C.toInt(o.dueDay) === null) o.dueDay = sd || 1; }
                 else if (o.frequency === 'One-Time') { o.dueDay = ''; o.dueMonth = ''; if (!o.endDate) o.endDate = C.validISO(o.startDate) ? o.startDate : this.today; }
                 else { if (o.endDate && o.endDate === o.startDate) o.endDate = ''; if (C.toInt(o.dueDay) === null) o.dueDay = sd || ''; if (C.toInt(o.dueMonth) === null) o.dueMonth = sm || ''; this.fixDay(o); }
+                this.rev++;
             },
 
             /* ============================== option lists ============================== */
             union(base, extra) { return [...new Set([...base, ...extra].filter(Boolean))]; },
-            get regionOptions() { return this.memo('ro', '', () => this.union(this.regions, [...this.commitments.map(c => c.region), ...this.expenseLogs.map(l => l.region)])); },
-            get currencyOptions() { return this.memo('co', '', () => this.union(this.currencies, [...this.commitments.map(c => c.currency), ...this.expenseLogs.map(l => l.currency), ...this.events.map(e => e.currency)])); },
-            get categoryOptions() { return this.memo('ca', '', () => this.union(this.categories, [...this.commitments.map(c => c.category), ...this.expenseLogs.map(l => l.category)])); },
-            get methodOptions() { return this.memo('me', '', () => this.union(this.methods, [...this.commitments.map(c => c.method), ...this.expenseLogs.map(l => l.method)])); },
+            get regionOptions() { return this.memo('ro', '', () => stable('ro', this.union(this.regions, [...this.commitments.map(c => c.region), ...this.expenseLogs.map(l => l.region)]))); },
+            get currencyOptions() { return this.memo('co', '', () => stable('co', this.union(this.currencies, [...this.commitments.map(c => c.currency), ...this.expenseLogs.map(l => l.currency), ...this.events.map(e => e.currency)]))); },
+            get categoryOptions() { return this.memo('ca', '', () => stable('ca', this.union(this.categories, [...this.commitments.map(c => c.category), ...this.expenseLogs.map(l => l.category)]))); },
+            get methodOptions() { return this.memo('me', '', () => stable('me', this.union(this.methods, [...this.commitments.map(c => c.method), ...this.expenseLogs.map(l => l.method)]))); },
             onLinkChange(l) {
                 if (l.commitmentId && !l.commitmentDate) l.commitmentDate = this.dueDatesOf(l.commitmentId).find(d => d >= C.addDays(this.today, -45)) || '';
                 if (!l.commitmentId) l.commitmentDate = l.commitmentDate || '';
+                this.rev++;
             },
 
             /* ============================== commitments: status + view ============================== */
@@ -240,7 +238,7 @@
                     return JSON.stringify(keep) !== JSON.stringify(this.sortedCommitmentIds());
                 });
             },
-            get selectedItems() { const s = new Set(this.selectedRowIds.map(Number)); return this.cRows.filter(c => s.has(Number(c.id))); },
+            get selectedItems() { const s = new Set(this.selectedRowIds.map(Number)); return this.cRows.filter(c => !c._draft && s.has(Number(c.id))); },
             get allSelected() { const v = this.cRows; if (!v.length) return false; const s = new Set(this.selectedRowIds.map(Number)); return v.every(c => s.has(Number(c.id))); },
             toggleSelectAll(e) {
                 const ids = this.cRows.map(c => Number(c.id)), cur = this.selectedRowIds.map(Number);
@@ -283,14 +281,15 @@
                 this.rev++;
             },
             deleteRow(k, o) {
-                if (o._draft) { this.discardDraft(k, o); return; }
+                if (o._draft) { this.discardDraft(k, o); return true; }
                 const label = k === 'c' ? o.name : k === 'l' ? o.item : o.title;
                 const extra = k === 'c' && this.expenseLogs.some(l => Number(l.commitmentId) === Number(o.id)) ? '\nIts payment history in the Expense Log is kept (unlinked).' : '';
-                if (!confirm(`Delete "${label || 'this row'}"?${extra}`)) return;
+                if (!confirm(`Delete "${label || 'this row'}"?${extra}`)) return false;
                 if (k === 'c') { this.expenseLogs.forEach(l => { if (Number(l.commitmentId) === Number(o.id)) l.commitmentId = ''; }); this.selectedRowIds = this.selectedRowIds.filter(i => Number(i) !== Number(o.id)); }
                 const key = this.arrOf(k); this[key] = this[key].filter(x => x.id !== o.id);
                 this.rev++;
                 if (this.persist({ toast: false })) { if (k === 'c') this.refreshView(); else if (k === 'e') this.refreshEvents(); else this.runLogQuery(); this.showToast('Deleted.'); }
+                return true;
             },
             // ----- modal (mobile + "Edit" on desktop) -----
             openModal(k, o, isNew = false) { this.modal = { show: true, kind: k, isNew, orig: isNew ? null : o, item: { ...o } }; },
@@ -306,7 +305,7 @@
                 if (isNew) { const arr = this[this.arrOf(k)]; target = { id: this.newId(arr), ...item }; arr.unshift(target); if (k === 'c') this.cView.unshift(target.id); else if (k === 'e') this.eView.unshift(target.id); else { this.lView.ids.unshift(target.id); this.lView.total++; } }
                 else Object.assign(orig, item);
                 this.closeModal(); this.rev++;
-                if (thenPay && k === 'c') { this.markAsPaid(target); return; }
+                if (thenPay && k === 'c') { if (this.persist({ toast: false })) this.markAsPaid(target); return; }   // the edit is saved even if there is nothing to pay
                 if (this.persist({ toast: false })) this.showToast(isNew ? 'Added.' : 'Changes saved.');
             },
             payOccurrence(c, date) {
@@ -316,6 +315,7 @@
                 return true;
             },
             markAsPaid(c) {
+                if (c._draft) { this.showToast('Save the row first (Save row), then mark it paid.', 'info'); return; }
                 const e = this.errList('c', c);
                 if (e.length) { this.showToast(`Fix "${c.name || 'this item'}" first: ${e.join(', ')}`, 'error'); return; }
                 const target = C.payTarget(c, C.buildPaidIndex(this.expenseLogs), this.today);
@@ -368,7 +368,7 @@
             get logOptions() {
                 return this.memo('lo', '', () => {
                     const d = k => [...new Set(this.expenseLogs.map(l => l[k]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
-                    return { category: d('category'), method: d('method'), region: d('region'), currency: d('currency') };
+                    return { category: stable('lo_c', d('category')), method: stable('lo_m', d('method')), region: stable('lo_r', d('region')), currency: stable('lo_u', d('currency')) };
                 });
             },
             resetLogFilters() { this.lf = { q: '', actualFrom: '', actualTo: '', commitFrom: '', commitTo: '', category: 'All', region: 'All', currency: 'All', method: 'All', link: 'any', minAmt: '', maxAmt: '' }; this.ls = [{ col: 'actualDate', dir: 'desc' }, { col: 'amount', dir: 'desc' }, { col: '', dir: 'asc' }]; },
@@ -403,20 +403,56 @@
             },
 
             /* ============================== dashboard analytics ============================== */
+            get liveC() { return this.memo('lc', '', () => this.commitments.filter(c => !c._draft)); },
+            get liveL() { return this.memo('ll', '', () => this.expenseLogs.filter(l => !l._draft)); },
             get win() { return this.memo('win', JSON.stringify(this.dash), () => C.makeWindow(this.dash, this.today)); },
             get prevWin() { return this.memo('pwin', JSON.stringify(this.dash), () => C.previousWindow(this.win)); },
-            get an() { return this.memo('an', JSON.stringify(this.dash), () => C.analyze(this.commitments.filter(c => !c._draft), this.expenseLogs.filter(l => !l._draft), this.win, this.today)); },
-            get prevAn() { return this.memo('pan', JSON.stringify(this.dash), () => C.analyze([], this.expenseLogs.filter(l => !l._draft), this.prevWin, this.today)); },
+            get an() { return this.memo('an', JSON.stringify(this.dash), () => C.analyze(this.liveC, this.liveL, this.win, this.today)); },
             get dashCurrencies() {
-                return this.memo('dc', '', () => { const s = new Set(); [...this.commitments, ...this.expenseLogs, ...this.events].forEach(x => { if (x.currency) s.add(x.currency); }); return s.size ? [...s].sort() : ['AED']; });
+                return this.memo('dc', '', () => { const s = new Set(); [...this.commitments, ...this.expenseLogs, ...this.events].forEach(x => { if (x.currency) s.add(x.currency); }); return stable('dc', s.size ? [...s].sort() : ['AED']); });
             },
             get curSel() { return this.dashCurrencies.includes(this.dashCur) ? this.dashCur : this.dashCurrencies[0]; },
-            get trendData() { return this.memo('tr', JSON.stringify(this.dash) + this.curSel, () => C.trend(this.expenseLogs.filter(l => !l._draft), this.win, this.prevWin, this.curSel, this.today)); },
-            get yearOptions() { const y = C.ymd(this.today)[0]; return Array.from({ length: 10 }, (_, i) => y - 6 + i); },
-            get overdueList() {
-                return this.memo('od', '', () => this.commitments.filter(c => !c._draft && this.st(c).status === 'Overdue').map(c => ({ c, s: this.st(c) })));
+            get trendData() { return this.memo('tr', JSON.stringify(this.dash) + this.curSel, () => C.trend(this.liveL, this.win, this.prevWin, this.curSel, this.today)); },
+            get yearOptions() {
+                const y = C.ymd(this.today)[0], d = this.dash, s = new Set(Array.from({ length: 10 }, (_, i) => y - 6 + i));
+                [d.fromY, d.toY, d.year].forEach(v => { if (Number.isInteger(Number(v)) && v) s.add(Number(v)); });
+                this.liveL.forEach(l => { if (C.validISO(l.actualDate)) s.add(+l.actualDate.slice(0, 4)); });
+                return [...s].sort((a, b) => a - b);
             },
-            get categoryRows() { return Object.entries(this.an.category).map(([cat, totals]) => ({ cat, totals })).sort((a, b) => a.cat.localeCompare(b.cat)); },
+            stepWindow(dir) { const n = C.shiftSelection(this.win, dir); if (n) this.dash = { ...this.dash, ...n }; else this.showToast('That is outside the supported date range.', 'info'); },
+            resetWindow() { this.dash = C.sanitizeSelection({ mode: 'this' }, this.today); },
+            get isThisMonth() { return this.dash.mode === 'this'; },
+
+            // Overdue commitments (current state, independent of the selected window)
+            get overdueList() { return this.memo('od', '', () => this.liveC.filter(c => this.st(c).status === 'Overdue').map(c => ({ c, s: this.st(c) }))); },
+            // Everything still unpaid in the next 30 days
+            get next30() {
+                return this.memo('n30', '', () => {
+                    const t = this.today, a = C.analyze(this.liveC, this.liveL, { start: t, end: C.addDays(t, 30), months: [] }, t);
+                    return { items: a.occ.filter(o => !o.paid).map(o => ({ ...o, days: C.daysBetween(t, o.date) })), total: a.outstanding };
+                });
+            },
+            // Fixed-term commitments (loans, EMIs, instalments): progress and what is left to pay
+            get fixedTerm() {
+                return this.memo('ft', '', () => {
+                    const all = this.liveC.filter(c => c.frequency !== 'One-Time' && C.validISO(c.endDate)).map(c => {
+                        const s = this.st(c), left = Math.max(0, s.total - s.paidCount);
+                        return { c, s, left, leftAmt: C.toMoney(left * c.amount), pct: s.total ? Math.round((s.paidCount / s.total) * 100) : 0 };
+                    }).filter(x => x.s.total > 0 && !x.s.invalid);
+                    return { active: all.filter(x => x.left > 0).sort((a, b) => a.c.endDate.localeCompare(b.c.endDate)), done: all.filter(x => x.left === 0).length };
+                });
+            },
+            get fixedLeft() { const m = {}; this.fixedTerm.active.forEach(x => C.addTo(m, x.c.currency || 'AED', x.leftAmt)); return m; },
+            // Ranked spend per category (selected currency, selected window)
+            get catRank() { return this.memo('cr', JSON.stringify(this.dash) + this.curSel, () => C.categoryRanking(this.liveL, this.win, this.curSel, 8)); },
+            // Due dates in the window, with a status filter
+            dueState(o) { return o.paid ? 'Paid' : o.overdue ? 'Overdue' : 'Pending'; },
+            get dueCounts() { const m = { All: this.an.occ.length, Overdue: 0, Pending: 0, Paid: 0 }; this.an.occ.forEach(o => { m[this.dueState(o)]++; }); return m; },
+            get dueRows() { return this.dueFilter === 'All' ? this.an.occ : this.an.occ.filter(o => this.dueState(o) === this.dueFilter); },
+            get paidPct() { return this.an.occ.length ? Math.round((this.an.paidCount / this.an.occ.length) * 100) : 0; },
+            get barRows() { return this.an.perMonth; },
+            get hasBarData() { return this.barRows.some(m => (m.required[this.curSel] || 0) > 0 || (m.actual[this.curSel] || 0) > 0); },
+            get hasTrendData() { return this.trendData.curTotal > 0 || this.trendData.prevTotal > 0; },
             sumBy(items) { const m = {}; items.forEach(i => C.addTo(m, i.currency || 'AED', Number(i.amount) || 0)); return m; },
             fmtMap(map, signed = false) {
                 const e = Object.entries(map || {}); if (!e.length) return '—';
@@ -427,32 +463,44 @@
                 if (t.pct === null) return t.curTotal ? 'no previous spend to compare' : '';
                 return `${t.pct >= 0 ? '▲' : '▼'} ${Math.abs(t.pct).toFixed(1)}% vs ${this.prevWin.label}`;
             },
+
+            /* ---- charts (Chart.js). Colour = meaning: blue obligations, orange actual spend, grey previous period ---- */
             get chartKey() {
                 if (this.tab !== 'dashboard' || this.loading) return '';
-                return JSON.stringify([this.curSel, this.an.perMonth.map(m => [m.required[this.curSel] || 0, m.actual[this.curSel] || 0]), this.trendData.current, this.trendData.previous]);
+                return JSON.stringify([this.curSel, this.barRows.map(m => [m.required[this.curSel] || 0, m.actual[this.curSel] || 0]), this.trendData.current, this.trendData.previous, this.win.label]);
             },
+            destroyCharts() { Object.keys(CH).forEach(k => { try { CH[k].destroy(); } catch (e) { } delete CH[k]; }); },
             drawCharts() {
                 if (typeof Chart === 'undefined' || this.tab !== 'dashboard') return;
-                const cur = this.curSel, pm = this.an.perMonth, tr = this.trendData;
+                chartCur = this.curSel;
+                const pm = this.barRows, tr = this.trendData;
                 Chart.defaults.color = '#94a3b8'; Chart.defaults.borderColor = 'rgba(51,65,85,.55)'; Chart.defaults.font.size = 11;
-                const opts = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { boxWidth: 12, usePointStyle: true } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${cur} ${fmtNum(c.parsed.y)}` } } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtNum(v).replace('.00', '') } } } };
-                const mk = (id, type, data, extra) => {
+                const base = () => ({
+                    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { labels: { boxWidth: 12, usePointStyle: true } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${chartCur} ${fmtNum(c.parsed.y)}` } } },     // reads chartCur when shown
+                    scales: { x: { grid: { display: false } }, y: { beginAtZero: true, title: { display: true, text: chartCur }, ticks: { callback: v => compact.format(v) } } }
+                });
+                const mk = (id, type, data) => {
                     const el = document.getElementById(id); if (!el) return;
-                    if (CH[id]) { CH[id].data = data; CH[id].update(); } else CH[id] = new Chart(el, { type, data, options: { ...opts, ...(extra || {}) } });
+                    if (CH[id] && CH[id].canvas !== el) { try { CH[id].destroy(); } catch (e) { } delete CH[id]; }
+                    if (CH[id]) { CH[id].data = data; CH[id].options.scales.y.title.text = chartCur; CH[id].update(); }
+                    else CH[id] = new Chart(el, { type, data, options: base() });
                 };
+                const bar = { borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: false, maxBarThickness: 48 };
                 mk('chBar', 'bar', { labels: pm.map(m => m.label), datasets: [
-                    { label: 'Upcoming obligations', data: pm.map(m => m.required[cur] || 0), backgroundColor: '#0ea5e9', borderRadius: 4 },
-                    { label: 'Actual expenses', data: pm.map(m => m.actual[cur] || 0), backgroundColor: '#34d399', borderRadius: 4 }] });
-                const pr = arr => { const n = arr.filter(v => v !== null).length; return n < 3 ? 4 : (tr.labels.length > 14 ? 0 : 3); };   // a lone point must still be visible
+                    { label: 'Upcoming obligations', data: pm.map(m => m.required[chartCur] || 0), backgroundColor: COLOR.obl, ...bar },
+                    { label: 'Actual expenses', data: pm.map(m => m.actual[chartCur] || 0), backgroundColor: COLOR.act, ...bar }] });
+                const pr = arr => (arr.filter(v => v !== null).length < 3 ? 4 : (tr.labels.length > 14 ? 0 : 3));      // a lone point must stay visible
                 mk('chTrend', 'line', { labels: tr.labels, datasets: [
-                    { label: this.win.label + (this.win.months.length === 1 ? ' (cumulative)' : ''), data: tr.current, borderColor: '#38bdf8', backgroundColor: '#38bdf8', tension: .25, spanGaps: false, pointRadius: pr(tr.current) },
-                    { label: this.prevWin.label, data: tr.previous, borderColor: '#94a3b8', backgroundColor: '#94a3b8', borderDash: [5, 4], tension: .25, spanGaps: false, pointRadius: pr(tr.previous) }] });
+                    { label: this.win.label.replace(/ \(.*\)$/, '') + (this.win.months.length === 1 ? ' (cumulative)' : ''), data: tr.current, borderColor: COLOR.act, backgroundColor: COLOR.act, borderWidth: 2, tension: .25, spanGaps: false, pointRadius: pr(tr.current) },
+                    { label: this.prevWin.label, data: tr.previous, borderColor: COLOR.prev, backgroundColor: COLOR.prev, borderWidth: 2, borderDash: [5, 4], tension: .25, spanGaps: false, pointRadius: pr(tr.previous) }] });
             },
 
             /* ============================== import / export ============================== */
             exportSQLite() {
                 this.persist({ toast: false });
-                download(new Blob([db.export()], { type: 'application/x-sqlite3' }), `gowtham_tracker_v${C.SCHEMA_VERSION}_${C.todayISO()}.db`);
+                if (this.draftCount) this.showToast(`${this.draftCount} unsaved draft row(s) are not in the export. Press "Save row" first.`, 'info');
+                download(new Blob([db.export()], { type: 'application/x-sqlite3' }), `gowtham_tracker_v${C.SCHEMA_VERSION}_${stamp()}.db`);
             },
             exportCSV() {
                 const cell = v => { if (v === null || v === undefined) return ''; let s = String(v); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
@@ -460,30 +508,30 @@
                 this.commitments.filter(c => !c._draft).forEach(c => rows.push(['Commitment', c.name, c.region, c.category, c.amount, c.currency, c.frequency, this.scheduleText(c), c.startDate, c.endDate, '', '', '', this.st(c).status, c.method, c.notes]));
                 this.expenseLogs.filter(l => !l._draft).forEach(l => rows.push(['ExpenseLog', l.item, l.region, l.category, l.amount, l.currency, '', '', '', '', l.actualDate, l.commitmentDate, this.commitmentName(l.commitmentId), '', l.method, l.notes]));
                 this.events.filter(e => !e._draft).forEach(e => rows.push([e.kind, e.title, '', '', e.budget, e.currency, e.repeat, '', e.eventDate, '', '', '', '', this.evState(e), '', e.notes]));
-                download(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'gowtham_export_' + C.todayISO() + '.csv');
+                download(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'gowtham_export_' + stamp() + '.csv');
                 this.showToast('CSV exported successfully!');
             },
             async importSQLite(event) {
                 const input = event.target, file = input.files && input.files[0];
                 if (!file) return;
                 try {
-                    if (!confirm('Importing replaces ALL current data in this browser. Older files are upgraded automatically (your file on disk is not changed). Continue?')) return;
+                    if (!confirm('Importing replaces ALL current data in this browser (your file on disk is not changed). Continue?')) return;
                     const u8 = new Uint8Array(await file.arrayBuffer()), SQL = await getSQL();
                     const candidate = new SQL.Database(u8), prev = db;
                     try {
-                        const names = C.listTables(candidate);                                  // throws on invalid files
+                        const names = C.listTables(candidate);                   // throws "file is not a database" for other files
+                        if (!names.length) throw new Error('this database is empty');
                         if (!names.some(n => ['commitments', 'expense_logs', 'events', 'events_list', 'uae_payments', 'india_payments'].includes(n))) throw new Error('this file is not a tracker database');
+                        C.ensureSchema(candidate);                               // older / newer / damaged files are rejected here; nothing is changed
                         db = candidate;
-                        const rep = this.upgradeCurrentDb();
                         this.loadDataFromDB(); this.persist({ toast: false }); this.runLogQuery();
                         if (prev) prev.close();
-                        this.showToast(rep.migrated ? `Imported and upgraded from schema v${rep.fromVersion} to v${rep.toVersion}.` : 'SQLite database loaded!');
+                        this.showToast('Database imported.');
                     } catch (err) {
                         db = prev; try { candidate.close(); } catch (_) { } try { if (db) this.loadDataFromDB(); } catch (_) { }
-                        this.migration = null;
                         throw err;
                     }
-                } catch (err) { console.error(err); this.showToast('Import failed: ' + (err.message || 'invalid file'), 'error'); }
+                } catch (err) { console.debug('Import rejected:', err.message); this.showToast('Import failed: ' + (err.message || 'invalid file'), 'error'); }
                 finally { input.value = ''; }
             },
             clearAllData() {

@@ -3,7 +3,7 @@
  *  - occurrence generation + derived status for payment commitments (based on startDate / endDate)
  *  - dashboard time windows + analytics
  *  - SQL builder for the Expense Log (filter / multi-column sort / pagination)
- *  - schema v4 + safe migration from every older version
+ *  - schema v4 (older files are rejected with a clear message - there is no migration code any more)
  *  - validation
  */
 (function (root) {
@@ -49,12 +49,6 @@
     const addDays = (s, n) => { const [y, m, d] = ymd(s); return todayISO(new Date(y, m - 1, d + n)); };
     const daysBetween = (a, b) => { const [ay, am, ad] = ymd(a), [by, bm, bd] = ymd(b); return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 864e5); };
     const fmtDate = s => { if (!validISO(s)) return s || '—'; const [y, m, d] = ymd(s); return `${d} ${MONTH_NAMES[m - 1]} ${y}`; };
-    const parseDayMon = s => {       // legacy text such as "15-Nov"
-        const m = /^(\d{1,2})[-\/ ]([A-Za-z]{3})/.exec(String(s || '').trim());
-        if (!m) return null;
-        const mi = MONTH_NAMES.findIndex(n => n.toLowerCase() === m[2].toLowerCase()), d = +m[1];
-        return (mi < 0 || d < 1 || d > 31) ? null : { d, m: mi + 1 };
-    };
 
     /* ------------------------------------------------------------------ occurrences & status */
     // Every due date of a commitment inside [from, to], clipped to the commitment's own [startDate, endDate].
@@ -123,7 +117,11 @@
         const push = (y, m) => months.push({ key: `${y}-${pad2(m)}`, y, m, label: `${MONTH_NAMES[m - 1]} ${y}`, start: monthStart(y, m), end: monthEnd(y, m) });
         let label = '', error = '';
         const mode = sel.mode || 'this';
-        if (mode === 'this' || mode === 'next' || mode === 'last') {
+        if (mode === 'last3' || mode === 'last6' || mode === 'next3' || mode === 'ytd') {
+            const span = { last3: [-2, 3], last6: [-5, 6], next3: [1, 3], ytd: [1 - tm, tm] }[mode];
+            for (let i = 0; i < span[1]; i++) { const [y, m] = addMonths(ty, tm, span[0] + i); push(y, m); }
+            label = { last3: 'Last 3 months', last6: 'Last 6 months', next3: 'Next 3 months', ytd: 'Year to date' }[mode] + ` (${months[0].label} – ${months[months.length - 1].label})`;
+        } else if (mode === 'this' || mode === 'next' || mode === 'last') {
             const [y, m] = addMonths(ty, tm, mode === 'next' ? 1 : mode === 'last' ? -1 : 0); push(y, m);
             label = `${{ this: 'This month', next: 'Next month', last: 'Last month' }[mode]} (${months[0].label})`;
         } else if (mode === 'year') {
@@ -143,6 +141,25 @@
         const n = win.months.length, f = win.months[0], [y, m] = addMonths(f.y, f.m, -n), [ey, em] = addMonths(y, m, n - 1);
         return makeWindow({ mode: 'months', fromY: y, fromM: m, toY: ey, toM: em }, win.start);
     }
+    // Selection that is one window earlier (dir -1) or later (+1). Years step by one year, everything else by the window length.
+    function shiftSelection(win, dir) {
+        const f = win.months[0], n = win.months.length;
+        if (win.mode === 'year') return { mode: 'year', year: Math.min(2100, Math.max(1990, f.y + dir)) };
+        const [y, m] = addMonths(f.y, f.m, dir * n), [ey, em] = addMonths(y, m, n - 1);
+        if (y < 1990 || ey > 2100) return null;
+        return { mode: 'months', fromY: y, fromM: m, toY: ey, toM: em };
+    }
+    const MODES = ['this', 'next', 'last', 'last3', 'last6', 'next3', 'ytd', 'months', 'year'];
+    // Never trust a stored selection: returns a safe selection object.
+    function sanitizeSelection(sel, today) {
+        const [ty, tm] = ymd(today), out = { mode: 'this', fromM: tm, fromY: ty, toM: tm, toY: ty, year: ty };
+        if (!sel || typeof sel !== 'object' || !MODES.includes(sel.mode)) return out;
+        out.mode = sel.mode;
+        const ok = (v, lo, hi) => Number.isInteger(Number(v)) && Number(v) >= lo && Number(v) <= hi;
+        ['fromM', 'toM'].forEach(k => { if (ok(sel[k], 1, 12)) out[k] = Number(sel[k]); });
+        ['fromY', 'toY', 'year'].forEach(k => { if (ok(sel[k], 1990, 2100)) out[k] = Number(sel[k]); });
+        return out;
+    }
 
     /* ------------------------------------------------------------------ analytics */
     function analyze(commitments, logs, win, today) {
@@ -153,41 +170,63 @@
         }));
         occ.sort((a, b) => a.date.localeCompare(b.date) || String(a.c.name).localeCompare(String(b.c.name)));
         const required = {}, paidBy = {}, outstanding = {}, overdue = {}, actual = {}, category = {};
-        occ.forEach(o => { addTo(required, o.currency, o.amount); if (o.paid) addTo(paidBy, o.currency, o.amount); else addTo(outstanding, o.currency, o.amount); if (o.overdue) addTo(overdue, o.currency, o.amount); });
-        const inWin = logs.filter(l => validISO(l.actualDate) && l.actualDate >= win.start && l.actualDate <= win.end);
-        inWin.forEach(l => { addTo(actual, l.currency || 'AED', toMoney(l.amount)); const k = l.category || 'Uncategorized'; (category[k] = category[k] || {}); addTo(category[k], l.currency || 'AED', toMoney(l.amount)); });
-        const perMonth = win.months.map(m => {
-            const r = {}, a = {};
-            occ.filter(o => o.month === m.key).forEach(o => addTo(r, o.currency, o.amount));
-            inWin.filter(l => monthKey(l.actualDate) === m.key).forEach(l => addTo(a, l.currency || 'AED', toMoney(l.amount)));
-            return { key: m.key, label: m.label, required: r, actual: a };
+        const perKey = new Map(win.months.map(m => [m.key, { key: m.key, label: m.label, required: {}, actual: {} }]));      // one pass, no per-month filtering
+        occ.forEach(o => {
+            addTo(required, o.currency, o.amount);
+            if (o.paid) addTo(paidBy, o.currency, o.amount); else addTo(outstanding, o.currency, o.amount);
+            if (o.overdue) addTo(overdue, o.currency, o.amount);
+            const pm = perKey.get(o.month); if (pm) addTo(pm.required, o.currency, o.amount);
         });
-        return { occ, required, paid: paidBy, outstanding, overdue, actual, category, perMonth, logCount: inWin.length, paidCount: occ.filter(o => o.paid).length, overdueCount: occ.filter(o => o.overdue).length };
+        let logCount = 0;
+        logs.forEach(l => {
+            if (!validISO(l.actualDate) || l.actualDate < win.start || l.actualDate > win.end) return;
+            logCount++;
+            const cur = l.currency || 'AED', amt = toMoney(l.amount), k = l.category || 'Uncategorized';
+            addTo(actual, cur, amt); (category[k] = category[k] || {}); addTo(category[k], cur, amt);
+            const pm = perKey.get(monthKey(l.actualDate)); if (pm) addTo(pm.actual, cur, amt);
+        });
+        return { occ, required, paid: paidBy, outstanding, overdue, actual, category, perMonth: [...perKey.values()], logCount, paidCount: occ.filter(o => o.paid).length, overdueCount: occ.filter(o => o.overdue).length };
     }
-    // Spend of one currency: window vs the equally long previous window (daily cumulative for one month, monthly for longer windows)
+    // Spend of ONE currency: window vs the equally long previous window.
+    // One month -> cumulative daily line; several months -> one point per month. Single pass over the logs.
     function trend(logs, win, prev, cur, today) {
-        const sum = (w, pred) => logs.filter(l => (l.currency || 'AED') === cur && validISO(l.actualDate) && l.actualDate >= w.start && l.actualDate <= w.end && pred(l)).reduce((s, l) => s + toMoney(l.amount), 0);
-        let labels = [], a = [], b = [];
+        const byDay = new Map(), byMonth = new Map();
+        logs.forEach(l => {
+            if ((l.currency || 'AED') !== cur || !validISO(l.actualDate)) return;
+            const a = toMoney(l.amount);
+            byDay.set(l.actualDate, (byDay.get(l.actualDate) || 0) + a);
+            const k = monthKey(l.actualDate); byMonth.set(k, (byMonth.get(k) || 0) + a);
+        });
+        const r2 = v => Math.round(v * 100) / 100, labels = [], a = [], b = [];
         if (win.months.length === 1) {
-            const m = win.months[0], pm = prev.months[0], n = Math.max(daysInMonth(m.y, m.m), daysInMonth(pm.y, pm.m));
+            const m = win.months[0], pm = prev.months[0], dm = daysInMonth(m.y, m.m), dp = daysInMonth(pm.y, pm.m), n = Math.max(dm, dp);
             let ca = 0, cb = 0;
             for (let d = 1; d <= n; d++) {
                 labels.push(String(d));
-                const da = iso(m.y, m.m, Math.min(d, daysInMonth(m.y, m.m))), db = iso(pm.y, pm.m, Math.min(d, daysInMonth(pm.y, pm.m)));
-                if (d <= daysInMonth(m.y, m.m)) ca += logs.filter(l => (l.currency || 'AED') === cur && l.actualDate === da).reduce((s, l) => s + toMoney(l.amount), 0);
-                if (d <= daysInMonth(pm.y, pm.m)) cb += logs.filter(l => (l.currency || 'AED') === cur && l.actualDate === db).reduce((s, l) => s + toMoney(l.amount), 0);
-                a.push(da > today ? null : Math.round(ca * 100) / 100);       // do not draw the future of the running month
-                b.push(d <= daysInMonth(pm.y, pm.m) ? Math.round(cb * 100) / 100 : null);
+                const da = iso(m.y, m.m, Math.min(d, dm)), db = iso(pm.y, pm.m, Math.min(d, dp));
+                if (d <= dm) ca += byDay.get(da) || 0;
+                if (d <= dp) cb += byDay.get(db) || 0;
+                a.push(d > dm || da > today ? null : r2(ca));          // never draw the future of the running month
+                b.push(d <= dp ? r2(cb) : null);
             }
         } else {
-            win.months.forEach((m, i) => {
-                labels.push(m.label + (prev.months[i] ? '' : ''));
-                a.push(Math.round(sum({ start: m.start, end: m.end }, () => true) * 100) / 100);
-                b.push(prev.months[i] ? Math.round(sum({ start: prev.months[i].start, end: prev.months[i].end }, () => true) * 100) / 100 : null);
-            });
+            win.months.forEach((m, i) => { labels.push(m.label); a.push(r2(byMonth.get(m.key) || 0)); b.push(prev.months[i] ? r2(byMonth.get(prev.months[i].key) || 0) : null); });
         }
-        const curTotal = sum(win, () => true), prevTotal = sum(prev, () => true);
-        return { labels, current: a, previous: b, curTotal, prevTotal, delta: curTotal - prevTotal, pct: prevTotal ? ((curTotal - prevTotal) / prevTotal) * 100 : null };
+        const sumRange = w => { let s = 0; w.months.forEach(m => { s += byMonth.get(m.key) || 0; }); return s; };
+        const curTotal = r2(sumRange(win)), prevTotal = r2(sumRange(prev));
+        return { labels, current: a, previous: b, curTotal, prevTotal, delta: r2(curTotal - prevTotal), pct: prevTotal ? ((curTotal - prevTotal) / prevTotal) * 100 : null };
+    }
+    // Ranked spend per category for one currency. Small categories beyond `top` fold into "Other".
+    function categoryRanking(logs, win, cur, top = 8) {
+        const m = new Map(); let total = 0;
+        logs.forEach(l => {
+            if ((l.currency || 'AED') !== cur || !validISO(l.actualDate) || l.actualDate < win.start || l.actualDate > win.end) return;
+            const k = l.category || 'Uncategorized', a = toMoney(l.amount), e = m.get(k) || { cat: k, total: 0, count: 0 };
+            e.total += a; e.count++; m.set(k, e); total += a;
+        });
+        let rows = [...m.values()].sort((x, y) => y.total - x.total || x.cat.localeCompare(y.cat));
+        if (rows.length > top) { const rest = rows.slice(top - 1), other = { cat: 'Other', total: rest.reduce((s, r) => s + r.total, 0), count: rest.reduce((s, r) => s + r.count, 0), folded: rest.length }; rows = [...rows.slice(0, top - 1), other]; }
+        return { total: toMoney(total), rows: rows.map(r => ({ ...r, total: toMoney(r.total), share: total ? r.total / total : 0 })) };
     }
 
     /* ------------------------------------------------------------------ events */
@@ -241,7 +280,7 @@
         return out;
     }
 
-    /* ------------------------------------------------------------------ DB: schema + migration */
+    /* ------------------------------------------------------------------ DB: schema */
     const rowsOf = (db, sql) => { const r = db.exec(sql); return r.length ? r[0].values.map(v => Object.fromEntries(r[0].columns.map((c, i) => [c, v[i]]))) : []; };
     const listTables = db => rowsOf(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map(r => r.name);
     const getVersion = db => Number(rowsOf(db, 'PRAGMA user_version')[0].user_version) || 0;
@@ -274,81 +313,21 @@
     }
     function inTx(db, fn) { db.run('BEGIN'); try { const r = fn(); db.run('COMMIT'); return r; } catch (e) { try { db.run('ROLLBACK'); } catch (_) { } throw e; } }
 
-    const norm = s => String(s || '').trim().toLowerCase();
-    /* Migration v1..v3 -> v4. Reads the old rows into memory, validates the mapping, then (single transaction)
-       drops the old tables, creates the v4 schema, inserts, verifies row counts and stamps user_version = 4.
-       Any error rolls everything back, leaving the original database untouched. */
-    function migrateToV4(db, today) {
-        const tables = listTables(db), fromVersion = getVersion(db), [ty, tm] = ymd(today);
-        if (tables.includes('events')) throw new Error('Unexpected table "events" in an older database.');
-        const read = t => tables.includes(t) ? rowsOf(db, `SELECT * FROM ${t} ORDER BY rowid`) : [];
-        const oldC = read('commitments'), oldL = read('expense_logs'), oldE = read('events_list');
-        let nextId = oldC.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0);
-        [['uae_payments', 'UAE', 'AED'], ['india_payments', 'India', 'INR']].forEach(([t, region, currency]) => read(t).forEach(r => oldC.push({ ...r, id: ++nextId, region, currency, status: 'Pending' })));
-        const rep = { fromVersion, toVersion: SCHEMA_VERSION, counts: { commitments: oldC.length, expenseLogs: oldL.length, events: oldE.length }, linkedPayments: 0, paidWithoutLog: 0, notes: [] };
-        const curKey = monthKey(today);
-
-        const logs = oldL.map(r => ({
-            id: toInt(r.id), actualDate: validISO(r.actualDate) ? r.actualDate : String(r.date ?? r.actualDate ?? ''), commitmentDate: '', commitmentId: null,
-            region: r.region || 'UAE', category: r.category || '', item: r.item || '', amount: toMoney(r.amount), currency: r.currency || 'AED', method: r.method || '', notes: r.notes || ''
-        }));
-        const claimed = new Set();
-        const commitments = oldC.map(r => {
-            const frequency = ENUMS.frequency.includes(r.frequency) ? r.frequency : 'Monthly';
-            let dueDay = toInt(r.dueDay), dueMonth = toInt(r.dueMonth);
-            const legacyDate = String(r.dueDate ?? ''), wasPaid = r.status === 'Paid';
-            const pm = /^\d{4}-\d{2}$/.test(r.paidMonth || '') ? r.paidMonth : curKey;
-            let startDate, endDate = null;
-            if (frequency === 'One-Time') {
-                const d = validISO(legacyDate) ? legacyDate : today; startDate = d; endDate = d; dueDay = null; dueMonth = null;
-            } else {
-                if (frequency !== 'Monthly' && !dueMonth) { const p = parseDayMon(legacyDate); if (p) { dueMonth = p.m; dueDay = dueDay || p.d; } }
-                if (frequency === 'Monthly') dueMonth = null;
-                const basis = wasPaid && pm < curKey ? pm : curKey;        // so a payment made in an earlier cycle still maps to a due date
-                startDate = basis + '-01';
+    // Opens a database that must already be schema v4 (or empty -> fresh v4). Older files are NOT converted.
+    function ensureSchema(db) {
+        const ver = getVersion(db), tables = listTables(db), fail = (code, msg) => { const e = new Error(msg); e.code = code; return e; };
+        if (ver > SCHEMA_VERSION) throw fail('NEWER_SCHEMA', `This database was created by a newer app version (schema ${ver}).`);
+        if (ver === SCHEMA_VERSION) {
+            for (const [t, cols] of Object.entries(SCHEMA)) {
+                if (!tables.includes(t)) throw fail('BAD_SCHEMA', `This v4 database is missing the "${t}" table.`);
+                const have = rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name), miss = Object.keys(cols).filter(c => !have.includes(c));
+                if (miss.length) throw fail('BAD_SCHEMA', `Table "${t}" is missing column(s): ${miss.join(', ')}.`);
             }
-            const c = { id: toInt(r.id), name: r.name || '', region: r.region || 'UAE', category: r.category || '', amount: toMoney(r.amount), currency: r.currency || 'AED', frequency, dueDay, dueMonth, startDate, endDate, method: r.method || '', notes: r.notes || '' };
-            if (wasPaid) {          // old "Paid" flag -> link the matching expense-log row to the due date it settled
-                const [py, pmn] = ymd(pm + '-01');
-                let due;
-                if (frequency === 'One-Time') due = endDate;
-                else {      // the due date in the paid month; if none (e.g. paid early), the first one within the following cycle
-                    const [ey, em] = addMonths(py, pmn, { 'Monthly': 0, 'Bi-Monthly': 2, 'Yearly': 12 }[frequency]);
-                    due = occurrencesOf(c, monthStart(py, pmn), monthEnd(py, pmn))[0] || occurrencesOf(c, monthStart(py, pmn), monthEnd(ey, em))[0];
-                }
-                const cand = logs.filter(l => !claimed.has(l.id) && l.commitmentId === null && norm(l.item) === norm(c.name) && (frequency === 'One-Time' || l.actualDate.startsWith(pm)));
-                const hit = cand.find(l => l.amount === c.amount) || cand[0];
-                if (due && hit) { hit.commitmentId = c.id; hit.commitmentDate = due; claimed.add(hit.id); rep.linkedPayments++; }
-                else { rep.paidWithoutLog++; rep.notes.push(`"${c.name}" was marked Paid but no matching expense row was found - it shows as unpaid; mark it paid again if needed.`); }
-            }
-            return c;
-        });
-        const events = oldE.map(r => {
-            let m = toInt(r.eventMonth), d = toInt(r.eventDay);
-            if (!m || !d) { const p = parseDayMon(r.date); if (p) { m = p.m; d = p.d; } }
-            const has = m >= 1 && m <= 12 && d >= 1 && d <= 31;
-            return { id: toInt(r.id), title: r.name || r.title || '', kind: 'Event', eventDate: has ? iso(ty, m, clampDay(ty, m, d)) : '', repeat: has ? 'Yearly' : 'None', budget: toMoney(r.budget), currency: r.currency || 'AED', done: 0, notes: [r.relation ? `Relation: ${r.relation}` : '', r.notes || ''].filter(Boolean).join(' · ') };
-        });
-        inTx(db, () => {
-            ['commitments', 'expense_logs', 'events_list', 'uae_payments', 'india_payments'].forEach(t => db.run(`DROP TABLE IF EXISTS ${t}`));
-            createSchema(db);
-            commitments.forEach(r => db.run(INS('commitments'), dbValues('commitments', r)));
-            logs.forEach(r => db.run(INS('expense_logs'), dbValues('expense_logs', r)));
-            events.forEach(r => db.run(INS('events'), dbValues('events', r)));
-            const n = t => rowsOf(db, `SELECT COUNT(*) AS n FROM ${t}`)[0].n;
-            if (n('commitments') !== oldC.length || n('expense_logs') !== oldL.length || n('events') !== oldE.length) throw new Error('Migration verification failed: row counts differ.');
-            db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-        });
-        rep.migrated = true;
-        return rep;
-    }
-    function ensureLatest(db, today) {
-        const ver = getVersion(db), tables = listTables(db);
-        if (ver > SCHEMA_VERSION) throw new Error(`This database was created by a newer app version (schema ${ver}).`);
-        const known = ['commitments', 'expense_logs', 'events_list', 'events', 'uae_payments', 'india_payments'];
-        if (ver === SCHEMA_VERSION) { createSchema(db); return { migrated: false, fromVersion: ver, toVersion: ver }; }
-        if (!tables.some(t => known.includes(t))) { inTx(db, () => { createSchema(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); }); return { migrated: false, fresh: true, fromVersion: ver, toVersion: SCHEMA_VERSION }; }
-        return migrateToV4(db, today);
+            createSchema(db);                                    // only adds indexes if they are missing
+            return { fresh: false };
+        }
+        if (!tables.length) { inTx(db, () => { createSchema(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); }); return { fresh: true }; }
+        throw fail('OLD_SCHEMA', `This database is from an older version (schema ${ver}). Older files are no longer converted - open it once in the v4.0 build, export it, and import that file here.`);
     }
 
     /* ------------------------------------------------------------------ validation (returns {field: message}) */
@@ -402,9 +381,9 @@
 
     root.Core = {
         SCHEMA_VERSION, SCHEMA, ENUMS, DEFAULTS, MONTH_NAMES, SORT_COLS,
-        toInt, toMoney, addTo, pad2, isLeap, daysInMonth, iso, isISO, ymd, validISO, todayISO, monthKey, monthStart, monthEnd, clampDay, addMonths, addDays, daysBetween, fmtDate, parseDayMon,
-        occurrencesOf, occKey, buildPaidIndex, statusOf, payTarget, makeWindow, previousWindow, analyze, trend, nextEventDate, eventState,
-        buildLogQuery, queryAll, rowsOf, listTables, getVersion, createSchema, INS, dbValues, inTx, migrateToV4, ensureLatest,
+        toInt, toMoney, addTo, pad2, isLeap, daysInMonth, iso, isISO, ymd, validISO, todayISO, monthKey, monthStart, monthEnd, clampDay, addMonths, addDays, daysBetween, fmtDate,
+        occurrencesOf, occKey, buildPaidIndex, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, categoryRanking, nextEventDate, eventState,
+        buildLogQuery, queryAll, rowsOf, listTables, getVersion, createSchema, INS, dbValues, inTx, ensureSchema,
         validateCommitment, validateLog, validateEvent
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = root.Core;

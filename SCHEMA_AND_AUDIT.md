@@ -1,4 +1,4 @@
-# Finance Tracker v4 - schema, migration and audit notes
+# Finance Tracker v4.1 - schema and audit notes
 
 ## 1. Schema v4 (`PRAGMA user_version = 4`)
 
@@ -52,29 +52,17 @@ Due dates = every date generated from frequency/dueDay/dueMonth inside `[startDa
 
 A due date that is today is *not* overdue. "Mark paid" settles the oldest missed due date first, otherwise the next one.
 
-## 3. Migration (any older file -> v4)
-Runs automatically on load **and** on Import. `ensureLatest()`:
-1. Reads `user_version` and the table list. Newer than 4 -> refused. Empty/unknown -> fresh v4.
-2. Copies a **pre-upgrade backup** into browser storage first (`Download pre-upgrade backup` appears on the dashboard).
-3. Reads all old rows into memory (v1 `uae_payments`/`india_payments`, v2/v3 `commitments`, `expense_logs`, `events_list`).
-4. In ONE transaction: drops old tables, creates v4, inserts mapped rows **keeping the original ids**, verifies the row counts
-   match, stamps `user_version = 4`. Any error -> ROLLBACK, the original database is untouched.
-5. Idempotent: running it on a v4 file does nothing.
+## 3. Opening and importing files (no migration)
+`Core.ensureSchema(db)` is the only gate, used on startup and on **Import DB**:
+* empty database -> fresh v4 schema created;
+* `user_version = 4` with all three tables and their columns -> accepted;
+* older / unstamped tracker files -> rejected (`OLD_SCHEMA`), newer than 4 -> rejected (`NEWER_SCHEMA`), v4 stamp with missing tables or columns -> rejected (`BAD_SCHEMA`).
+Import also refuses empty files and SQLite files that contain none of the tracker tables ("this file is not a tracker database").
+A rejected import restores the previous database; a rejected *stored* database is kept in browser storage under `sqlite_db_rejected_backup`
+and a message is shown. To bring a v3 file forward, upgrade it once with the v4.0 build, export, then import here.
+(The earlier build's `sqlite_db_pre_v4_backup` storage key, if present, is left untouched.)
 
-Field mapping
-| Old | New |
-|-----|-----|
-| commitments.* | same columns (ids kept); `dueDay`/`dueMonth` coerced to INTEGER; legacy `"15-Nov"` text -> dueMonth 11, dueDay 15 |
-| Monthly / Bi-Monthly / Yearly | `startDate` = 1st of the month it was last paid (if "Paid" in an earlier month) otherwise 1st of the current month; `endDate` = NULL (ongoing) |
-| One-Time | `startDate` = `endDate` = old due date (today if it was missing/invalid) |
-| `status = 'Paid'` (+ `paidMonth`) | the matching expense row (same item name, in the paid month, preferring equal amount) gets `commitmentId` + `commitmentDate` -> becomes a linked payment. If no row matches it is listed in the upgrade report ("Paid but no log found") and shows unpaid |
-| expense_logs.date | `actualDate`; `commitmentDate` = NULL unless linked above |
-| events_list (name, relation, eventDay/eventMonth or "15-May") | `events` row: kind Event, eventDate = that day this year, repeat Yearly; relation -> notes |
-| uae_payments / india_payments (v1) | commitments with region UAE/AED, India/INR |
-
-Why start = 1st of the current month: it avoids a flood of false "overdue" items for months that were never tracked, and matches the old behaviour (an unpaid monthly item is overdue only if its due day already passed this month).
-
-Export: **Export DB** always writes the v4 file (`gowtham_tracker_v4_YYYY-MM-DD.db`). Older apps cannot open it; keep the pre-upgrade backup if you need to go back.
+Export: **Export DB** writes `gowtham_tracker_v4_YYYY-MM-DD_HH-MM-SS.db` (local time).
 
 ## 4. Audit - edge cases found and how they are handled
 1. **Month length** - day 29/30/31 in short months clamps to the last day; Yearly Feb 29 -> Feb 28 in non-leap years. (unit-tested)
@@ -87,10 +75,17 @@ Export: **Export DB** always writes the v4 file (`gowtham_tracker_v4_YYYY-MM-DD.
 8. **Mixed currencies** - never summed. Every total is grouped per currency (AED and INR on separate lines); charts show one chosen currency.
 9. **Partial / over-payments** - a payment settles a whole due date regardless of the amount paid (the log keeps the real amount, and "Actual spend" uses it). Part-payments are not modelled; log the extra as a separate expense.
 10. **End before start / no due date inside the range** - blocked by validation with a clear message.
-11. **One-Time without a due date** - validation requires it; legacy rows without one use the migration date.
+11. **One-Time without a due date** - validation requires it.
 12. **Sorting while typing** - rows are never re-ordered by typing. New rows are drafts pinned on top, numbered `•`, and are only committed with *Save row*. Sort/filter is re-applied only when you press *Apply sort / filters*, change a filter, or save a row.
 13. **Row numbers** are positions in the current view (1..n; across pages for the Expense Log), not database ids, so they stay sequential after filtering or deleting.
 14. **Expense-log "server-side"** - this is an offline single-file app, so "server-side" means the SQLite engine: filtering, multi-column sorting (3 levels), pagination and per-currency totals are executed as parameterised SQL (no string concatenation of user input; LIKE wildcards escaped). Quick client-side filters (search/region/frequency/status) on commitments stay in memory.
 15. **Large data** - the DB is stored base64 in `localStorage` (~5 MB quota, roughly 100k+ rows is far away but not unlimited). A full quota shows an error and asks you to Export DB. IndexedDB is the next step if you outgrow it.
 16. **Import safety** - invalid/other SQLite files are rejected without touching current data; the existing database stays loaded.
 17. **Open risks left by design** - no multi-device sync; no automatic currency conversion (a rate table would be needed for a single grand total); no recurring-event "done per year" for tasks.
+
+## 5. v4.1 additions
+18. **Chart currency** - the tooltip callback used to capture the currency in force when the chart was first drawn, so switching to INR kept "AED" in tooltips/axis. The chart now reads the selected currency at draw and tooltip time and updates the axis title.
+19. **Dashboard windows** - this/next/last month, last 3/6 months, next 3 months, year to date, chosen months, chosen year; previous/next stepping; the comparison window is the equally long period just before. Totals stay per currency.
+20. **Drafts** - cannot be paid or selected; "Save & mark paid" saves first; closing the tab with unsaved drafts prompts.
+21. **Responsive** - header no longer overflows at 320 px and 768 px; checked at 320/375/414/768/1024/1280/1920 px.
+22. **Performance** - single-pass analytics with memoisation, option lists keep object identity so lists are not re-rendered on every keystroke. Measured on 300 commitments + 6000 expense rows: Pay-tab keystroke ~546 -> ~340 ms, window switch ~241 -> ~175 ms. A per-row validation cache was tried and made things slower, so it was not kept.
