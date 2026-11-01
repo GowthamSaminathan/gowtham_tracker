@@ -12,13 +12,13 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
     <title>Gowtham Schedules &amp; Expense Tracker v5 (Offline)</title>
     <!-- Everything is local: the app works with no internet connection -->
-    <link rel="stylesheet" href="assets/css/tailwind.css?v=5.2.0">
+    <link rel="stylesheet" href="assets/css/tailwind.css?v=5.3.0">
     <link rel="stylesheet" href="assets/css/fontawesome.min.css">
     <script src="assets/js/sql-wasm.js"></script>
     <script src="assets/js/sql-wasm-binary.js"></script>
     <script src="assets/js/chart.umd.js"></script>
-    <script src="assets/js/core.js?v=5.2.0"></script>
-    <script src="assets/js/app.js?v=5.2.0"></script>
+    <script src="assets/js/core.js?v=5.3.0"></script>
+    <script src="assets/js/app.js?v=5.3.0"></script>
     <!-- Version tags (?v=) above make browsers fetch fresh scripts after each release. Bump them together with appVersion.
          Safety net: if an old cached script still slipped through, reload once instead of showing a broken page. -->
     <script>(function () { if (window.Core && window.Core.moneyBreakdown && window.combo) return;
@@ -147,8 +147,6 @@
                         <div><label class="lbl" for="dYear">Year</label>
                             <select id="dYear" x-model.number="dash.year" class="inp w-auto"><template x-for="y in yearOptions" :key="y"><option :value="y" :selected="y === dash.year" x-text="y"></option></template></select></div>
                     </template>
-                    <div><label class="lbl" for="dCur">Currency (charts &amp; ranking)</label>
-                        <select id="dCur" x-model="dashCur" class="inp w-auto"><template x-for="c in dashCurrencies" :key="c"><option :value="c" :selected="c === curSel" x-text="c"></option></template></select></div>
                 </div>
                 <p x-show="win.error" class="text-xs text-red-400" x-text="win.error + ' Showing the current month instead.'"></p>
                 <p class="text-xs text-slate-400">Showing <b class="text-slate-200" x-text="win.label"></b> · compared with <span x-text="prevWin.label"></span><span x-show="an.archivedCount" x-text="' · ' + an.archivedCount + ' archived commitment(s) not counted'"></span></p>
@@ -212,13 +210,20 @@
                         <button @click="dueFilter = k" :aria-pressed="dueFilter === k" :class="dueFilter === k ? 'bg-sky-600 text-onaccent' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition" x-text="k + ' (' + dueCounts[k] + ')'"></button>
                     </template>
                 </div>
-                <!-- totals: everything shown, and the ticked rows -->
+                <div x-show="dueOptions.curs.length > 1" class="flex flex-wrap items-center gap-1" role="group" aria-label="Currencies">
+                    <span class="text-[11px] text-slate-400 mr-1"><i class="fa-solid fa-coins mr-1"></i>Currency:</span>
+                    <button @click="dueF = { ...dueF, curs: [] }" :aria-pressed="!dueF.curs.length" :class="!dueF.curs.length ? 'bg-sky-600 text-onaccent' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition">All</button>
+                    <template x-for="c in dueOptions.curs" :key="c">
+                        <button @click="dueToggleCur(c)" :aria-pressed="dueF.curs.includes(c)" :class="dueF.curs.includes(c) ? 'bg-sky-600 text-onaccent' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition" x-text="c"></button>
+                    </template>
+                </div>
+                <!-- totals: everything shown (paused left out), and the ticked rows (paused included when ticked) -->
                 <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs rounded-xl bg-slate-950/50 border border-slate-800/70 px-2.5 py-1.5">
                     <label class="flex items-center gap-2 text-slate-300"><input type="checkbox" name="due-select-all" :checked="dueAllSel" @change="dueToggleAll()" :disabled="!dueRows.length" class="rounded bg-slate-950 border-slate-700" aria-label="Select all shown">
-                        <span><span x-text="dueTotals.shownN + ' shown'"></span> · <b class="text-amber-300 tabular-nums" x-text="fmtMap(dueTotals.shown).replace(/\n/g, ' + ')"></b></span></label>
-                    <span x-show="dueTotals.selN" class="text-sky-300"><i class="fa-solid fa-square-check mr-1"></i><span x-text="dueTotals.selN + ' selected · '"></span><b class="tabular-nums" x-text="fmtMap(dueTotals.sel).replace(/\n/g, ' + ')"></b> <button @click="dueSel = []" class="ml-1 text-slate-400 hover:text-white" aria-label="Clear selection" title="Clear selection"><i class="fa-solid fa-xmark"></i></button></span>
+                        <span><span x-text="dueTotals.shownN + ' shown'"></span> · <b class="text-amber-300 tabular-nums" x-text="fmtMap(dueTotals.shown).replace(/\n/g, ' + ')"></b><span x-show="dueTotals.pausedN" class="text-purple-300" x-text="' (+ ' + dueTotals.pausedN + ' paused not counted)'"></span></span></label>
+                    <span x-show="dueTotals.selN" class="text-sky-300"><i class="fa-solid fa-square-check mr-1"></i><span x-text="dueTotals.selN + ' selected' + (dueTotals.selPaused ? ' incl. ' + dueTotals.selPaused + ' paused' : '') + ' · '"></span><b class="tabular-nums" x-text="fmtMap(dueTotals.sel).replace(/\n/g, ' + ')"></b> <button @click="dueSel = []" class="ml-1 text-slate-400 hover:text-white" aria-label="Clear selection" title="Clear selection"><i class="fa-solid fa-xmark"></i></button></span>
                 </div>
-                <p x-show="Object.keys(dueTotals.paused).length" class="text-[10px] text-purple-300" x-text="'Paused (listed, not counted): ' + fmtMap(dueTotals.paused).replace(/\n/g, ' + ')"></p>
+                <p x-show="dueTotals.pausedN" class="text-[10px] text-purple-300" x-text="'Paused: ' + fmtMap(dueTotals.paused).replace(/\n/g, ' + ') + ' · not in the shown total; ticked paused rows ARE added to the selected total (untick to leave them out)'"></p>
                 <p x-show="!dueAll.length" class="text-xs text-slate-500">No commitment has a due date in this period (check each commitment's start / end dates).</p>
                 <p x-show="dueAll.length && !dueRows.length" class="text-xs text-slate-500">No due dates match these filters.</p>
                 <div class="max-h-80 overflow-y-auto space-y-1">
@@ -233,24 +238,40 @@
                 <p x-show="dueRows.length > 150" class="text-[10px] text-slate-500" x-text="'Showing the first 150 of ' + dueRows.length + ' (totals include all of them)'"></p>
             </div>
 
-            <!-- Charts -->
+            <!-- Charts: one block per currency (amounts in different currencies are never added up) -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 <div class="card p-4">
                     <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-column mr-1" :style="`color:${colors.obl}`"></i> Actual expenses vs upcoming obligations</h3>
-                    <p class="text-[10px] text-slate-500 mb-2" x-text="'Per month · ' + curSel"></p>
-                    <div class="relative h-64"><canvas id="chBar" role="img" :aria-label="'Bar chart of actual expenses versus obligations per month in ' + curSel"></canvas>
-                        <p x-show="!hasBarData" class="absolute inset-0 grid place-items-center text-xs text-slate-500 pointer-events-none text-center px-6" x-text="'No obligations or spend in ' + curSel + ' for this window.'"></p></div>
-                    <details class="mt-3 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-200">Show data as a table</summary>
-                        <div class="overflow-x-auto mt-2"><table class="w-full text-left"><thead class="text-[10px] uppercase text-slate-400"><tr><th class="py-1 pr-3">Month</th><th class="py-1 pr-3 text-right" x-text="'Obligations (' + curSel + ')'"></th><th class="py-1 text-right" x-text="'Actual (' + curSel + ')'"></th></tr></thead>
-                            <tbody><template x-for="m in barRows" :key="m.key"><tr class="border-t border-slate-800"><td class="py-1 pr-3 text-slate-300" x-text="m.label"></td><td class="py-1 pr-3 text-right tabular-nums" x-text="money(m.required[curSel] || 0)"></td><td class="py-1 text-right tabular-nums" x-text="money(m.actual[curSel] || 0)"></td></tr></template></tbody></table></div></details>
+                    <p class="text-[10px] text-slate-500 mb-2" x-text="'Per month · ' + (chartCurs.length ? chartCurs.join(', ') : 'no data')"></p>
+                    <p x-show="!chartCurs.length" class="text-xs text-slate-500 py-10 text-center">No obligations or spend in this window.</p>
+                    <div class="space-y-4">
+                        <template x-for="cur in chartCurs" :key="cur">
+                            <div>
+                                <p x-show="chartCurs.length > 1" class="text-[11px] font-bold text-slate-300 mb-1" x-text="cur"></p>
+                                <div class="relative h-56"><canvas :id="'chBar-' + cid(cur)" role="img" :aria-label="'Bar chart of actual expenses versus obligations per month in ' + cur"></canvas>
+                                    <p x-show="!hasBarFor(cur)" class="absolute inset-0 grid place-items-center text-xs text-slate-500 pointer-events-none text-center px-6" x-text="'No obligations or spend in ' + cur + ' for this window.'"></p></div>
+                                <details class="mt-2 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-200" x-text="'Show ' + cur + ' data as a table'"></summary>
+                                    <div class="overflow-x-auto mt-2"><table class="w-full text-left"><thead class="text-[10px] uppercase text-slate-400"><tr><th class="py-1 pr-3">Month</th><th class="py-1 pr-3 text-right" x-text="'Obligations (' + cur + ')'"></th><th class="py-1 text-right" x-text="'Actual (' + cur + ')'"></th></tr></thead>
+                                        <tbody><template x-for="m in barRows" :key="m.key"><tr class="border-t border-slate-800"><td class="py-1 pr-3 text-slate-300" x-text="m.label"></td><td class="py-1 pr-3 text-right tabular-nums" x-text="money(m.required[cur] || 0)"></td><td class="py-1 text-right tabular-nums" x-text="money(m.actual[cur] || 0)"></td></tr></template></tbody></table></div></details>
+                            </div>
+                        </template>
+                    </div>
                 </div>
                 <div class="card p-4">
                     <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1"><i class="fa-solid fa-chart-line mr-1" :style="`color:${colors.act}`"></i> Spend trend vs previous period</h3>
-                    <p class="text-[10px] text-slate-500 mb-2" x-text="(win.months.length === 1 ? 'Cumulative daily spend · ' : 'Monthly spend · ') + curSel + (spendDelta ? ' · ' + spendDelta : '')"></p>
-                    <div class="relative h-64"><canvas id="chTrend" role="img" :aria-label="'Line chart comparing spend in ' + curSel + ' with the previous period'"></canvas>
-                        <p x-show="!hasTrendData" class="absolute inset-0 grid place-items-center text-xs text-slate-500 pointer-events-none text-center px-6" x-text="'No spend in ' + curSel + ' in this or the previous period.'"></p></div>
-                    <details class="mt-3 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-200">Show totals</summary>
-                        <p class="mt-2 text-slate-300" x-text="win.label.replace(/ \(.*\)$/, '') + ': ' + money(trendData.curTotal, curSel) + '  ·  ' + prevWin.label + ': ' + money(trendData.prevTotal, curSel) + '  ·  change ' + (trendData.delta > 0 ? '+' : '') + money(trendData.delta, curSel)"></p></details>
+                    <p class="text-[10px] text-slate-500 mb-2" x-text="(win.months.length === 1 ? 'Cumulative daily spend' : 'Monthly spend') + ' · compared with ' + prevWin.label"></p>
+                    <p x-show="!chartCurs.length" class="text-xs text-slate-500 py-10 text-center">No spend in this or the previous period.</p>
+                    <div class="space-y-4">
+                        <template x-for="cur in chartCurs" :key="cur">
+                            <div>
+                                <p class="text-[11px] mb-1"><b class="text-slate-300" x-show="chartCurs.length > 1" x-text="cur + ' '"></b><span class="text-slate-500" x-text="spendDeltaFor(cur)"></span></p>
+                                <div class="relative h-56"><canvas :id="'chTrend-' + cid(cur)" role="img" :aria-label="'Line chart comparing spend in ' + cur + ' with the previous period'"></canvas>
+                                    <p x-show="!hasTrendFor(cur)" class="absolute inset-0 grid place-items-center text-xs text-slate-500 pointer-events-none text-center px-6" x-text="'No spend in ' + cur + ' in this or the previous period.'"></p></div>
+                                <details class="mt-2 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-200" x-text="'Show ' + cur + ' totals'"></summary>
+                                    <p class="mt-2 text-slate-300" x-text="win.label.replace(/ \(.*\)$/, '') + ': ' + money(trendFor(cur).curTotal, cur) + '  ·  ' + prevWin.label + ': ' + money(trendFor(cur).prevTotal, cur) + '  ·  change ' + (trendFor(cur).delta > 0 ? '+' : '') + money(trendFor(cur).delta, cur)"></p></details>
+                            </div>
+                        </template>
+                    </div>
                 </div>
             </div>
 
@@ -263,19 +284,24 @@
                         <select name="bdmode" x-model="bdMode" aria-label="What to show" class="inp !w-auto"><option value="auto">Auto (follows the window)</option><option value="actual">Spent (Expense Log)</option><option value="projected">Spent + still to pay</option><option value="outstanding">Still to pay (future money)</option><option value="planned">All due dates (planned)</option></select>
                         <select name="bdgroup" x-model="bdGroup" aria-label="Group by" class="inp !w-auto"><option value="category">By category</option><option value="item">By item</option></select>
                     </div>
-                    <div x-show="breakdown.mode === 'projected' || breakdown.mode === 'planned'" class="flex flex-wrap gap-3 text-[10px] text-slate-400">
-                        <span><span class="inline-block w-2.5 h-2.5 rounded-sm align-middle mr-1" :style="`background:${colors.act}`"></span><span x-text="breakdown.mode === 'planned' ? 'Paid' : 'Spent'"></span></span>
+                    <div x-show="bdEff === 'projected' || bdEff === 'planned'" class="flex flex-wrap gap-3 text-[10px] text-slate-400">
+                        <span><span class="inline-block w-2.5 h-2.5 rounded-sm align-middle mr-1" :style="`background:${colors.act}`"></span><span x-text="bdEff === 'planned' ? 'Paid' : 'Spent'"></span></span>
                         <span><span class="inline-block w-2.5 h-2.5 rounded-sm align-middle mr-1" :style="`background:${colors.obl}`"></span>Still to pay</span>
                     </div>
-                    <p x-show="!breakdown.rows.length" class="text-xs text-slate-500" x-text="bdEmpty"></p>
-                    <template x-for="r in breakdown.rows" :key="r.cat">
-                        <div class="text-xs" :title="r.count + ' row(s)'">
-                            <div class="flex justify-between gap-2">
-                                <button type="button" @click="openInLog(r)" :disabled="!(r.a > 0 && !r.folded)" :title="r.a > 0 && !r.folded ? 'Show these expenses in the Expense Log' : ''" class="truncate text-left text-slate-200 enabled:hover:underline disabled:cursor-default" x-text="r.cat + (r.folded ? ' (' + r.folded + ' smaller)' : '')"></button>
-                                <span class="text-slate-300 tabular-nums shrink-0" x-text="money(r.total, curSel) + ' · ' + Math.round(r.share * 100) + '%'"></span></div>
-                            <div class="mt-1 h-2 rounded-full bg-slate-800 overflow-hidden flex" role="img" :aria-label="r.cat + ': ' + money(r.a, curSel) + ' spent or paid, ' + money(r.o, curSel) + ' still to pay'">
-                                <div class="h-full" :style="`width:${bdBar(r)[0]}%;background:${colors.act}`"></div><div class="h-full" :style="`width:${bdBar(r)[1]}%;background:${colors.obl}`"></div></div>
-                            <p x-show="r.a && r.o" class="text-[10px] text-slate-500 mt-0.5" x-text="money(r.a, curSel) + (breakdown.mode === 'planned' ? ' paid' : ' spent') + ' · ' + money(r.o, curSel) + ' still to pay'"></p>
+                    <p x-show="!breakdowns.length" class="text-xs text-slate-500" x-text="bdEmpty"></p>
+                    <template x-for="g in breakdowns" :key="g.cur">
+                        <div class="space-y-2">
+                            <p class="text-[11px] border-b border-slate-800 pb-1"><b class="text-slate-200" x-text="g.cur"></b> <span class="text-slate-500" x-text="'· ' + bdTotalText(g.b, g.cur)"></span></p>
+                            <template x-for="r in g.b.rows" :key="r.cat">
+                                <div class="text-xs" :title="r.count + ' row(s)'">
+                                    <div class="flex justify-between gap-2">
+                                        <button type="button" @click="openInLog(r, g.cur)" :disabled="!(r.a > 0 && !r.folded)" :title="r.a > 0 && !r.folded ? 'Show these expenses in the Expense Log' : ''" class="truncate text-left text-slate-200 enabled:hover:underline disabled:cursor-default" x-text="r.cat + (r.folded ? ' (' + r.folded + ' smaller)' : '')"></button>
+                                        <span class="text-slate-300 tabular-nums shrink-0" x-text="money(r.total, g.cur) + ' · ' + Math.round(r.share * 100) + '%'"></span></div>
+                                    <div class="mt-1 h-2 rounded-full bg-slate-800 overflow-hidden flex" role="img" :aria-label="r.cat + ': ' + money(r.a, g.cur) + ' spent or paid, ' + money(r.o, g.cur) + ' still to pay'">
+                                        <div class="h-full" :style="`width:${bdBar(r)[0]}%;background:${colors.act}`"></div><div class="h-full" :style="`width:${bdBar(r)[1]}%;background:${colors.obl}`"></div></div>
+                                    <p x-show="r.a && r.o" class="text-[10px] text-slate-500 mt-0.5" x-text="money(r.a, g.cur) + (g.b.mode === 'planned' ? ' paid' : ' spent') + ' · ' + money(r.o, g.cur) + ' still to pay'"></p>
+                                </div>
+                            </template>
                         </div>
                     </template>
                     <div class="flex justify-end"><button @click="openInLog()" class="text-[11px] text-sky-400 hover:underline"><i class="fa-solid fa-receipt mr-1"></i>Open this window in the Expense Log</button></div>

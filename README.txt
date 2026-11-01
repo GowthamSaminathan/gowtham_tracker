@@ -1,4 +1,4 @@
-GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v5.2)
+GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v5.3)
 ==========================================================
 
 HOW TO USE
@@ -12,7 +12,14 @@ IMPORTING A DATABASE
   your current data stays untouched - open them once in the v4.0 build and export first. "Export DB" always writes schema v5.
   The header always shows which file the data came from (or the last export name) and whether anything is unsaved.
 
-WHAT IS NEW IN v5.2
+WHAT IS NEW IN v5.3
+  * Charts and "Where the money went" show ALL currencies: one chart / ranking block per currency (amounts in different
+    currencies are never added together). The "Currency (charts & ranking)" selector is gone.
+  * "Due dates & still to pay": currency chips (All / AED / INR ... pick one or several). Ticked rows always count in the
+    selected total, paused ones included - untick a row to leave it out. The "shown" total still leaves paused rows out
+    and says how many.
+
+WHAT WAS NEW IN v5.2
   * Dashboard: "Still to pay" and "Due dates in this window" are one card, "Due dates & still to pay". Pick the period
     (the dashboard window, Today -> end of this month, or the next 7/14/30/60/90 days), a status (All, Unpaid, Overdue,
     Pending, Paid, Paused) and filters (search, category, commitment, min / max amount, include overdue). It shows the
