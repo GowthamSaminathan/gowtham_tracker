@@ -21,13 +21,16 @@
     const fromB64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
     const fmtNum = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const fmtMoney = (v, c) => (c ? c + ' ' : '') + fmtNum(v);
+    // Amount fields show "4,500.00" while not being edited and the plain number while focused.
+    const fmtAmt = v => (v === '' || v === null || v === undefined) ? '' : (Number.isFinite(Number(v)) && String(v).trim() !== '' ? fmtNum(v) : String(v));
+    const parseAmt = s => { const t = String(s ?? '').replace(/[,\s]/g, ''); if (t === '') return ''; return /^\d*\.?\d*$/.test(t) && Number.isFinite(Number(t)) ? Number(t) : String(s); };
     const clean = r => { for (const k in r) if (r[k] === null) r[k] = ''; return r; };
     const TABLE = { c: 'commitments', l: 'expense_logs', e: 'events' };
     // Single-row write operations ([sql, params]) used when auto-save is off, so only the row an action touched is saved.
     const opRow = (t, r) => [C.UPSERT(t), C.dbValues(t, r)];
     const opDel = (t, id) => [`DELETE FROM ${t} WHERE id = ?`, [Number(id)]];
     const opFlags = c => ['UPDATE commitments SET pausedMonth = ?, archived = ? WHERE id = ?', [C.isMonthKey(c.pausedMonth) ? c.pausedMonth : null, C.isArchived(c) ? 1 : 0, Number(c.id)]];
-    const BLANK_LF = () => ({ q: '', actualFrom: '', actualTo: '', commitFrom: '', commitTo: '', category: 'All', region: 'All', currency: 'All', method: 'All', link: 'any', minAmt: '', maxAmt: '' });
+    const BLANK_LF = () => ({ q: '', actualFrom: '', actualTo: '', commitFrom: '', commitTo: '', category: 'All', currency: 'All', method: 'All', link: 'any', minAmt: '', maxAmt: '' });
     const HORIZONS = [7, 14, 30, 60, 90];
     const download = (blob, name) => {
         const url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -90,20 +93,20 @@
             methods: ['Cash', 'Card', 'Credit card', 'Bank Transfer', 'Auto-debit', 'UPI'],
             commitments: [], expenseLogs: [], events: [], rev: 0, clock: Date.now(),
             selectedRowIds: [], cView: [], eView: [], lView: { ids: [], total: 0, totals: [] }, flashId: null,
-            f: { search: '', region: 'All', frequency: 'All', currency: 'All', status: 'All', sortBy: 'due' },
+            f: { search: '', frequency: 'All', currency: 'All', status: 'All', sortBy: 'due' }, showFilters: false, showLogFilters: false,
             lf: BLANK_LF(), payView: 'active',
             ls: [{ col: 'actualDate', dir: 'desc' }, { col: 'amount', dir: 'desc' }, { col: '', dir: 'asc' }],
-            sortCols: [['actualDate', 'Actual date'], ['commitmentDate', 'Commitment date'], ['item', 'Description'], ['category', 'Category'], ['region', 'Region'], ['amount', 'Amount'], ['currency', 'Currency'], ['method', 'Method'], ['linked', 'Linked']],
+            sortCols: [['actualDate', 'Actual date'], ['commitmentDate', 'Commitment date'], ['item', 'Description'], ['category', 'Category'], ['amount', 'Amount'], ['currency', 'Currency'], ['method', 'Method'], ['linked', 'Linked']],
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dashCur: '', dashH: 30, horizons: HORIZONS, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.0.1',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.1.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR,
             loading: true, loadError: '', saveState: 'saved', isDesktop: true,
             _saveTimer: null, _toastTimer: null, _logTimer: null,
-            money: fmtMoney, fmtDate: C.fmtDate,
+            money: fmtMoney, fmtDate: C.fmtDate, fmtAmt, parseAmt,
 
             /* ============================== boot ============================== */
             async initDB() {
@@ -391,7 +394,7 @@
                 const f = this.f, q = f.search.toLowerCase().trim(), info = this.stInfo.map, arch = this.payView === 'archived';
                 const list = this.commitments.filter(c => !c._draft && C.isArchived(c) === arch &&
                     (!q || [c.name, c.notes, c.category].map(x => x || '').join(' ').toLowerCase().includes(q)) &&
-                    (f.region === 'All' || c.region === f.region) && (f.frequency === 'All' || c.frequency === f.frequency) &&
+                    (f.frequency === 'All' || c.frequency === f.frequency) &&
                     (f.currency === 'All' || c.currency === f.currency) && (arch || f.status === 'All' || (info[c.id] && info[c.id].status === f.status)));
                 const by = f.sortBy, nm = (a, b) => (a.name || '').localeCompare(b.name || '');
                 list.sort((a, b) => {
@@ -419,6 +422,26 @@
                 const ids = this.cRows.map(c => Number(c.id)), cur = this.selectedRowIds.map(Number);
                 this.selectedRowIds = e.target.checked ? [...new Set([...cur, ...ids])] : cur.filter(id => !ids.includes(id));
             },
+            isSel(c) { return this.selectedRowIds.some(i => Number(i) === Number(c.id)); },
+            toggleSelect(c) {
+                if (c._draft) return;
+                const id = Number(c.id), cur = this.selectedRowIds.map(Number);
+                this.selectedRowIds = cur.includes(id) ? cur.filter(i => i !== id) : [...cur, id];
+            },
+            // What the selection bar offers (counts per action) - the bar replaces the per-row buttons.
+            get sel() {
+                const items = this.selectedItems, k = c => this.payState(c).kind, one = items.length === 1 ? items[0] : null;
+                return {
+                    n: items.length, one,
+                    pay: items.filter(c => k(c) === 'pay').length,
+                    undo: items.filter(c => k(c) === 'undo').length,
+                    resume: items.filter(c => k(c) === 'resume').length,
+                    pause: items.filter(c => k(c) === 'pay' && this.unpaidThisMonth(c).length).length,
+                    undoOld: one && k(one) === 'pay' && this.st(one).paidCount > 0,      // single row: undo an older payment
+                    date: one && k(one) === 'pay' ? this.payState(one).date : ''
+                };
+            },
+            clearSelection() { this.selectedRowIds = []; },
             get selectedTotalsDisplay() { return this.fmtMap(this.sumBy(this.selectedItems)).replace(/\n/g, ' + '); },
             flash(id) { this.flashId = id; this.$nextTick(() => { const el = document.querySelector(`[data-row="${id}"]`); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }); setTimeout(() => { if (this.flashId === id) this.flashId = null; }, 2200); },
 
@@ -432,7 +455,7 @@
             arrOf(k) { return k === 'c' ? 'commitments' : k === 'l' ? 'expenseLogs' : 'events'; },
             // Desktop: inline draft pinned on top (never sorted). Mobile: full-screen form, row is created on Save.
             addRow(k) {
-                if (k === 'c') { this.f = { search: '', region: 'All', frequency: 'All', currency: 'All', status: 'All', sortBy: this.f.sortBy }; this.setPayView('active'); }
+                if (k === 'c') { this.f = { search: '', frequency: 'All', currency: 'All', status: 'All', sortBy: this.f.sortBy }; this.setPayView('active'); }
                 if (!this.isDesktop) { this.openModal(k, this.blank(k), true); return; }
                 const arr = this[this.arrOf(k)], o = { id: this.newId(arr), ...this.blank(k), _draft: true };
                 arr.unshift(o);
@@ -513,17 +536,43 @@
                 this.rev++;
                 if (this.save(r.ops)) this.showToast(`Logged "${c.name}" for due date ${C.fmtDate(r.target)}.` + (r.resumed ? ' It is no longer paused.' : ''));
             },
-            // "Mark pending": removes the payment of the most recent settled due date (this month's first when the row shows Paid).
-            markAsPending(c) {
-                const s = this.st(c), mk = this.thisMonthKey;
+            // The payment "Mark pending" / undo removes: the most recently LOGGED payment (latest actual date, then newest row).
+            // When the row shows Paid, this month's payment is preferred so the month really becomes pending again.
+            undoLogFor(c) {
+                const mk = this.thisMonthKey;
                 let logs = this.expenseLogs.filter(l => !l._draft && Number(l.commitmentId) === Number(c.id));
-                if (s.status === 'Paid') { const cur = logs.filter(l => String(l.commitmentDate || '').slice(0, 7) === mk); if (cur.length) logs = cur; }
-                logs.sort((a, b) => String(b.commitmentDate || '').localeCompare(String(a.commitmentDate || '')) || String(b.actualDate || '').localeCompare(String(a.actualDate || '')) || b.id - a.id);
-                if (!logs.length) { this.showToast('No linked payment to undo.', 'info'); return; }
-                const l = logs[0];
-                if (!confirm(`Mark "${c.name}" as pending again?\nThis removes the payment of ${fmtMoney(l.amount, l.currency)} for due date ${C.fmtDate(l.commitmentDate)} from the Expense Log.`)) return;
-                this.expenseLogs = this.expenseLogs.filter(x => x.id !== l.id); this.lView.ids = this.lView.ids.filter(i => i !== l.id); this.lView.total = Math.max(0, this.lView.total - 1); this.rev++;
-                if (this.save([opDel('expense_logs', l.id)])) this.showToast(`"${c.name}" is pending again: due date ${C.fmtDate(l.commitmentDate)} is unpaid.`, 'info');
+                if (this.st(c).status === 'Paid') { const cur = logs.filter(l => String(l.commitmentDate || '').slice(0, 7) === mk); if (cur.length) logs = cur; }
+                logs.sort((a, b) => String(b.actualDate || '').localeCompare(String(a.actualDate || '')) || Number(b.id) - Number(a.id));
+                return logs[0] || null;
+            },
+            undoPayments(list) {
+                const pairs = list.map(c => [c, this.undoLogFor(c)]).filter(p => p[1]);
+                if (!pairs.length) { this.showToast('No linked payment to undo.', 'info'); return; }
+                const [c0, l0] = pairs[0];
+                const msg = pairs.length === 1 ? `Mark "${c0.name}" as pending again?\nThis removes the payment of ${fmtMoney(l0.amount, l0.currency)} for due date ${C.fmtDate(l0.commitmentDate)} from the Expense Log.`
+                    : `Mark ${pairs.length} commitments as pending again?\nThis removes their latest payment from the Expense Log.`;
+                if (!confirm(msg)) return;
+                const ids = new Set(pairs.map(p => p[1].id));
+                this.expenseLogs = this.expenseLogs.filter(x => !ids.has(x.id)); this.lView.ids = this.lView.ids.filter(i => !ids.has(i)); this.lView.total = Math.max(0, this.lView.total - ids.size); this.rev++;
+                if (this.save([...ids].map(id => opDel('expense_logs', id)))) this.showToast(pairs.length === 1 ? `"${c0.name}" is pending again: due date ${C.fmtDate(l0.commitmentDate)} is unpaid.` : `${pairs.length} commitments are pending again.`, 'info');
+            },
+            markAsPending(c) { this.undoPayments([c]); },
+            markSelectedAsPending() { this.undoPayments(this.selectedItems.filter(c => this.payState(c).kind === 'undo')); },
+            resumeSelected() {
+                const items = this.selectedItems.filter(c => this.isPausedNow(c)); if (!items.length) return;
+                items.forEach(c => { c.pausedMonth = ''; }); this.rev++;
+                if (this.save(items.map(opFlags))) this.showToast(`Resumed ${items.length} commitment(s): they count in ${this.thisMonthLabel}'s totals again.`);
+            },
+            editSelected() { const one = this.sel.one; if (one) this.openModal('c', one); },
+            deleteSelected() {
+                const items = this.selectedItems; if (!items.length) return;
+                if (items.length === 1) { this.deleteRow('c', items[0]); return; }
+                if (!confirm(`Delete ${items.length} commitments?\nTheir payment history in the Expense Log is kept (unlinked).`)) return;
+                const ids = new Set(items.map(c => Number(c.id))), ops = [];
+                this.expenseLogs.forEach(l => { if (ids.has(Number(l.commitmentId))) l.commitmentId = ''; });
+                ids.forEach(id => { ops.push(opDel('commitments', id)); ops.push(['UPDATE expense_logs SET commitmentId = NULL WHERE commitmentId = ?', [id]]); });
+                this.commitments = this.commitments.filter(c => !ids.has(Number(c.id))); this.selectedRowIds = []; this.rev++;
+                if (this.save(ops)) { this.refreshView(); this.showToast(`Deleted ${ids.size} commitments.`); }
             },
             markSelectedAsPaid() {
                 let n = 0, skipped = 0; const ops = [];
@@ -531,7 +580,7 @@
                     if (this.errList('c', c).length) { skipped++; return; }
                     const r = this.payOps(c); if (r) { n++; ops.push(...r.ops); }
                 });
-                this.selectedRowIds = []; this.rev++;
+                this.rev++;                                  // selection is kept: the bar now offers "Mark pending" for these rows
                 if (!n) { this.showToast(skipped ? 'Selected items have invalid fields. Fix the red fields first.' : 'Nothing to pay in the selection.', skipped ? 'error' : 'info'); return; }
                 if (this.save(ops)) this.showToast(`Logged ${n} payment(s).` + (skipped ? ` ${skipped} skipped (invalid).` : ''));
             },
@@ -552,7 +601,7 @@
                 const items = this.selectedItems.filter(c => !this.isPausedNow(c) && this.unpaidThisMonth(c).length);
                 if (!items.length) { this.showToast(`Nothing in the selection is still to pay in ${this.thisMonthLabel}.`, 'info'); return; }
                 items.forEach(c => { c.pausedMonth = this.thisMonthKey; });
-                this.selectedRowIds = []; this.rev++;
+                this.rev++;
                 if (this.save(items.map(opFlags))) this.showToast(`Paused ${items.length} commitment(s) for ${this.thisMonthLabel}.`, 'info');
             },
             setArchived(c, on) {
@@ -598,7 +647,8 @@
                 });
             },
             resetLogFilters() { this.lf = BLANK_LF(); this.ls = [{ col: 'actualDate', dir: 'desc' }, { col: 'amount', dir: 'desc' }, { col: '', dir: 'asc' }]; },
-            get activeLogFilters() { const f = this.lf; return ['q', 'actualFrom', 'actualTo', 'commitFrom', 'commitTo', 'minAmt', 'maxAmt'].filter(k => f[k] !== '').length + ['category', 'region', 'currency', 'method'].filter(k => f[k] !== 'All').length + (f.link !== 'any' ? 1 : 0); },
+            get activeLogFilters() { const f = this.lf; return ['q', 'actualFrom', 'actualTo', 'commitFrom', 'commitTo', 'minAmt', 'maxAmt'].filter(k => f[k] !== '').length + ['category', 'currency', 'method'].filter(k => f[k] !== 'All').length + (f.link !== 'any' ? 1 : 0); },
+            get activePayFilters() { const f = this.f; return (f.search.trim() ? 1 : 0) + ['frequency', 'currency', 'status'].filter(k => f[k] !== 'All').length; },
             commitmentName(id) { const c = this.commitments.find(x => Number(x.id) === Number(id)); return c ? c.name : ''; },
             dueDatesOf(id) {       // due dates offered when linking a log to a commitment (around today)
                 const c = this.commitments.find(x => Number(x.id) === Number(id)); if (!c) return [];
@@ -761,10 +811,10 @@
             },
             exportCSV() {
                 const cell = v => { if (v === null || v === undefined) return ''; let s = String(v); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-                const rows = [['Type', 'Name / Item', 'Region', 'Category', 'Amount', 'Currency', 'Frequency / Kind', 'Schedule', 'Start date', 'End date', 'Actual date', 'Commitment date', 'Linked commitment', 'Status', 'Method', 'Notes']];
-                this.commitments.filter(c => !c._draft).forEach(c => rows.push(['Commitment', c.name, c.region, c.category, c.amount, c.currency, c.frequency, this.scheduleText(c), c.startDate, c.endDate, '', '', '', this.st(c).status, c.method, c.notes]));
-                this.expenseLogs.filter(l => !l._draft).forEach(l => rows.push(['ExpenseLog', l.item, l.region, l.category, l.amount, l.currency, '', '', '', '', l.actualDate, l.commitmentDate, this.commitmentName(l.commitmentId), '', l.method, l.notes]));
-                this.events.filter(e => !e._draft).forEach(e => rows.push([e.kind, e.title, '', '', e.budget, e.currency, e.repeat, '', e.eventDate, '', '', '', '', this.evState(e), '', e.notes]));
+                const rows = [['Type', 'Name / Item', 'Category', 'Amount', 'Currency', 'Frequency / Kind', 'Schedule', 'Start date', 'End date', 'Actual date', 'Commitment date', 'Linked commitment', 'Status', 'Method', 'Notes']];
+                this.commitments.filter(c => !c._draft).forEach(c => rows.push(['Commitment', c.name, c.category, c.amount, c.currency, c.frequency, this.scheduleText(c), c.startDate, c.endDate, '', '', '', this.st(c).status, c.method, c.notes]));
+                this.expenseLogs.filter(l => !l._draft).forEach(l => rows.push(['ExpenseLog', l.item, l.category, l.amount, l.currency, '', '', '', '', l.actualDate, l.commitmentDate, this.commitmentName(l.commitmentId), '', l.method, l.notes]));
+                this.events.filter(e => !e._draft).forEach(e => rows.push([e.kind, e.title, '', e.budget, e.currency, e.repeat, '', e.eventDate, '', '', '', '', this.evState(e), '', e.notes]));
                 download(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'gowtham_export_' + stamp() + '.csv');
                 this.showToast('CSV exported successfully!');
             },
