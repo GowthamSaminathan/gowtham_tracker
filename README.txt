@@ -1,4 +1,4 @@
-GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v5.0)
+GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v5.1)
 ==========================================================
 
 HOW TO USE
@@ -12,7 +12,21 @@ IMPORTING A DATABASE
   your current data stays untouched - open them once in the v4.0 build and export first. "Export DB" always writes schema v5.
   The header always shows which file the data came from (or the last export name) and whether anything is unsaved.
 
-WHAT IS NEW IN v5.0
+WHAT IS NEW IN v5.1
+  * Pay Commitments: select rows (tap a card on a phone, tick a row on a laptop) and act on them from one sticky
+    selection bar at the bottom: count + total of the selection, Mark paid / Mark pending / Pause / Resume / Archive /
+    Edit / Delete. The total is always in view, no scrolling to the top.
+  * Fix: single rows could not be ticked on laptops (only "select all" worked); tapping a commitment on a phone now selects it.
+  * "Undo" removes the payment logged most recently (not the one with the latest due date).
+  * Amounts are shown with thousands separators ("12,500.00") and switch to a plain number while you edit them.
+  * Region removed from the screens (currency is enough); the column stays in the database so older files still import.
+  * Compact layout: one-line page headers on phones, search / filters behind a search icon, two-line cards; on laptops
+    Commitments and Expense Log are one line per row, spreadsheet style.
+  * Every form field has a name (removes the browser's autofill warning).
+  * "StorageType.persistent is deprecated" is printed by Chrome itself (DevTools device mode or an extension); the app
+    does not use that API.
+
+WHAT WAS NEW IN v5.0
   * Pay Commitments - Pause / Resume: pausing leaves THIS month's due date out of the dashboard totals (Required,
     Outstanding, Next N days, charts, due-date list) so you see exactly what you plan to pay this month. The pause ends by
     itself when the month changes (an unpaid paused date then counts as overdue again). "Mark paid" on a paused row lifts it.

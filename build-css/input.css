@@ -15,7 +15,7 @@
   .btn-red   { @apply bg-red-600/15 hover:bg-red-600/30 text-red-300 border border-red-500/30; }
   .btn-amber { @apply bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40; }
   .th    { @apply px-2 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 whitespace-nowrap text-left; }
-  .td    { @apply px-2 py-2 align-middle; }
+  .td    { @apply px-1.5 py-1 align-middle; }
   .lbl   { @apply block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1; }
   .badge { @apply text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap; }
   .kpi   { @apply bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-2xl shadow-lg p-4; }
@@ -42,6 +42,14 @@
   .switch[aria-checked="true"] { @apply bg-emerald-600 border-emerald-600; }
   .switch > span { @apply inline-block h-4 w-4 translate-x-1 rounded-full bg-slate-400 shadow transition; }
   .switch[aria-checked="true"] > span { @apply translate-x-6 bg-onaccent; }
+
+  /* Desktop spreadsheet-style tables: one line per row, smaller fields */
+  .grid-tbl .inp { font-size: 0.75rem !important; padding-top: 0.25rem; padding-bottom: 0.25rem; border-radius: 0.5rem; }
+  .grid-tbl select.inp { padding-left: 0.4rem; padding-right: 1.25rem; background-position: right 0.25rem center; }
+  .grid-tbl .th { padding-left: 0.375rem; padding-right: 0.375rem; padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  /* Selection bar sits above the phone bottom nav, at the bottom edge on desktop */
+  .selbar { bottom: calc(3.6rem + env(safe-area-inset-bottom, 0px)); }
+  @media (min-width: 1024px) { .selbar { bottom: 1rem; } }
 
   /* Mobile bottom sheet: dvh keeps the footer buttons above the browser toolbar (vh is the fallback) */
   .sheet { max-height: 92vh; max-height: 92dvh; }
