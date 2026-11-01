@@ -3,9 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="light dark">
+    <script>/* theme before first paint: saved choice (mirrored from the DB) or the device setting */
+        (function () { var p = null; try { p = localStorage.getItem('tracker_theme'); } catch (e) { }
+            var dark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : true;
+            var t = p === 'light' || p === 'dark' ? p : (dark ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', t); document.documentElement.style.colorScheme = t; })();</script>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
-    <title>Gowtham Schedules &amp; Expense Tracker v4 (Offline)</title>
+    <title>Gowtham Schedules &amp; Expense Tracker v5 (Offline)</title>
     <!-- Everything is local: the app works with no internet connection -->
     <link rel="stylesheet" href="assets/css/tailwind.css">
     <link rel="stylesheet" href="assets/css/fontawesome.min.css">
@@ -16,19 +21,15 @@
     <script src="assets/js/app.js"></script>
     <script src="assets/js/alpine.min.js" defer></script>
     <style>
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
-        ::-webkit-scrollbar-thumb { background: rgba(51, 65, 85, 0.8); border-radius: 9999px; }
         input, select, textarea { font-size: 16px !important; }
         @media (min-width: 640px) { input, select, textarea { font-size: 0.875rem !important; } }
-        html { color-scheme: dark; }
         #bottomNav { padding-bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px)); }
         .contents { display: contents; }
         details > summary { list-style: none; } details > summary::-webkit-details-marker { display: none; }
         @media (prefers-reduced-motion: reduce) { * { transition-duration: .01ms !important; } }
     </style>
 </head>
-<body class="min-h-full flex flex-col font-sans bg-slate-950 text-slate-100 antialiased selection:bg-sky-500 selection:text-white" x-data="trackerApp()" x-init="initDB()">
+<body class="min-h-full flex flex-col font-sans bg-slate-950 text-slate-100 antialiased selection:bg-sky-500 selection:text-onaccent" x-data="trackerApp()" x-init="initDB()">
     <div class="contents">
     <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 shadow-lg">
         <div class="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2 sm:gap-3">
@@ -39,25 +40,27 @@
                 <div class="min-w-0">
                     <h1 class="text-base font-bold tracking-tight text-white flex items-center gap-2 min-w-0">
                         <span class="truncate">Gowtham Schedules & Pay</span>
-                        <span class="shrink-0 text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">v4.1</span>
+                        <span class="shrink-0 text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider" x-text="'v' + appVersion">v5.0</span>
                     </h1>
-                    <p class="text-xs text-slate-400 truncate"><span class="hidden sm:inline">Unified SQLite Engine • </span><span :class="saveState === 'error' ? 'text-red-400' : saveState === 'dirty' ? 'text-amber-400' : 'text-emerald-400'" x-text="saveLabel"></span></p>
                 </div>
             </div>
 
             <!-- Desktop Nav -->
             <nav class="hidden lg:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
-                <button @click="tab = 'dashboard'" :class="tab === 'dashboard' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                <button @click="tab = 'dashboard'" :class="tab === 'dashboard' ? 'bg-sky-500 text-onaccent font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
                     <i class="fa-solid fa-chart-pie"></i> Dashboard
                 </button>
-                <button @click="tab = 'pay'" :class="tab === 'pay' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                <button @click="tab = 'pay'" :class="tab === 'pay' ? 'bg-sky-500 text-onaccent font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
                     <i class="fa-solid fa-credit-card"></i> Pay Commitments
                 </button>
-                <button @click="tab = 'log'" :class="tab === 'log' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                <button @click="tab = 'log'" :class="tab === 'log' ? 'bg-sky-500 text-onaccent font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
                     <i class="fa-solid fa-receipt"></i> Expense Log
                 </button>
-                <button @click="tab = 'events'" :class="tab === 'events' ? 'bg-sky-500 text-white font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                <button @click="tab = 'events'" :class="tab === 'events' ? 'bg-sky-500 text-onaccent font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
                     <i class="fa-solid fa-calendar-check"></i> Events & Tasks
+                </button>
+                <button @click="tab = 'settings'" :class="tab === 'settings' ? 'bg-sky-500 text-onaccent font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2">
+                    <i class="fa-solid fa-gear"></i> Settings
                 </button>
             </nav>
 
@@ -75,16 +78,29 @@
                 </label>
             </div>
         </div>
+        <!-- which database file this is + save state (always visible) -->
+        <div class="max-w-7xl mx-auto px-3 sm:px-4 pb-2 -mt-1 flex items-center gap-2 text-xs text-slate-400 min-w-0">
+            <span class="truncate min-w-0" :title="dbTitle" data-dbname><i class="fa-solid fa-database mr-1 text-slate-500"></i><span class="hidden sm:inline">Database: </span><span x-text="dbLabel" class="text-slate-300 font-medium"></span></span>
+            <template x-if="saveState === 'dirty' && !settings.autoSave"><button @click="saveAll()" title="Changes are not saved yet - tap to save" class="shrink-0 badge bg-amber-500/15 text-amber-300 border border-amber-500/40"><i class="fa-solid fa-circle text-[6px] align-middle mr-1"></i>Unsaved · Save</button></template>
+            <template x-if="saveState === 'dirty' && settings.autoSave"><span class="shrink-0 badge bg-amber-500/15 text-amber-300">Saving…</span></template>
+            <template x-if="saveState === 'error'"><span class="shrink-0 badge bg-red-500/15 text-red-300" x-text="saveLabel"></span></template>
+            <template x-if="saveState === 'saved'"><span class="shrink-0" :class="settings.exportPending ? 'text-amber-300' : 'text-emerald-400'" :title="dbTitle"><i class="fa-solid fa-check mr-0.5"></i><span x-text="settings.exportPending ? 'Saved · not exported' : 'Saved'"></span></span></template>
+        </div>
+        <!-- unsaved changes bar (auto-save off, or new rows not saved yet) -->
+        <div x-show="!loading && unsavedCount && !(settings.autoSave && !draftCount)" style="display:none" class="border-t border-amber-500/30 bg-amber-500/10" role="status">
+            <div class="max-w-7xl mx-auto px-3 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span class="text-amber-300 min-w-0"><i class="fa-solid fa-circle-exclamation mr-1"></i><span x-text="unsavedText"></span></span>
+                <span class="flex gap-2 shrink-0"><button @click="discardChanges()" class="btn btn-ghost !py-1">Discard</button><button @click="saveAll()" class="btn btn-em !py-1"><i class="fa-solid fa-floppy-disk"></i> Save now</button></span>
+            </div>
+        </div>
     </header>
-    <datalist id="catList"><template x-for="c in categoryOptions" :key="c"><option :value="c"></option></template></datalist>
-    <datalist id="methodList"><template x-for="c in methodOptions" :key="c"><option :value="c"></option></template></datalist>
 
     <main @input="onEdit($event)" @change="onEdit($event)" class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 mb-20 lg:mb-6 overflow-x-hidden">
 
         <p x-show="loading" class="text-center text-xs text-slate-400 py-6">Loading database…</p>
         <div x-show="loadError" style="display:none" class="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 mb-4 text-xs text-red-300 flex items-center justify-between gap-3">
             <span x-text="loadError"></span>
-            <button @click="location.reload()" class="btn bg-red-600 hover:bg-red-500 text-white">Reload</button>
+            <button @click="location.reload()" class="btn bg-red-600 hover:bg-red-500 text-onaccent">Reload</button>
         </div>
 
         <!-- ======================= DASHBOARD ======================= -->
@@ -106,7 +122,7 @@
                             <button @click="stepWindow(-1)" class="btn btn-ghost !px-2.5" aria-label="Previous period" title="Previous period"><i class="fa-solid fa-chevron-left"></i></button>
                             <select id="dMode" x-model="dash.mode" class="inp w-auto">
                                 <option value="this">This month</option><option value="next">Next month</option><option value="last">Last month</option>
-                                <option value="last3">Last 3 months</option><option value="last6">Last 6 months</option><option value="next3">Next 3 months</option><option value="ytd">Year to date</option>
+                                <option value="last3">Last 3 months</option><option value="last6">Last 6 months</option><option value="next3">Next 3 months</option><option value="next6">Next 6 months</option><option value="next12">Next 12 months</option><option value="rest">Rest of this year</option><option value="ytd">Year to date</option>
                                 <option value="months">Selected month(s)</option><option value="year">Selected year</option>
                             </select>
                             <button @click="stepWindow(1)" class="btn btn-ghost !px-2.5" aria-label="Next period" title="Next period"><i class="fa-solid fa-chevron-right"></i></button>
@@ -130,12 +146,21 @@
                         <select id="dCur" x-model="dashCur" class="inp w-auto"><template x-for="c in dashCurrencies" :key="c"><option :value="c" :selected="c === curSel" x-text="c"></option></template></select></div>
                 </div>
                 <p x-show="win.error" class="text-xs text-red-400" x-text="win.error + ' Showing the current month instead.'"></p>
-                <p class="text-xs text-slate-400">Showing <b class="text-slate-200" x-text="win.label"></b> · compared with <span x-text="prevWin.label"></span></p>
+                <p class="text-xs text-slate-400">Showing <b class="text-slate-200" x-text="win.label"></b> · compared with <span x-text="prevWin.label"></span><span x-show="an.archivedCount" x-text="' · ' + an.archivedCount + ' archived commitment(s) not counted'"></span></p>
             </div>
+
+            <!-- Paused for this month (left out of this month's totals) -->
+            <template x-if="pausedNow.items.length">
+                <div class="bg-purple-950/30 border border-purple-800/50 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span class="text-purple-200 min-w-0"><i class="fa-solid fa-pause mr-1"></i><b x-text="pausedNow.items.length + ' commitment(s) paused for ' + thisMonthLabel"></b> · <span x-text="fmtMap(pausedNow.total).replace(/\n/g, ' + ') + ' left out of this month’s totals'"></span></span>
+                    <button @click="reviewPaused()" class="btn btn-ghost !py-1">Review</button>
+                </div>
+            </template>
 
             <!-- KPIs (per currency, never added across currencies) -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <div class="kpi"><p class="kpi-l">Required (obligations)</p><p class="kpi-v text-sky-400" x-text="fmtMap(an.required)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.occ.length + ' due date(s) from active commitments'"></p></div>
+                <div class="kpi"><p class="kpi-l">Required (obligations)</p><p class="kpi-v text-sky-400" x-text="fmtMap(an.required)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.occ.length + ' due date(s) from active commitments'"></p>
+                    <p x-show="an.pausedOcc.length" class="text-[10px] text-purple-300" x-text="'Excludes paused: ' + fmtMap(an.pausedTotal).replace(/\n/g, ' + ')"></p></div>
                 <div class="kpi"><p class="kpi-l">Paid toward obligations</p><p class="kpi-v text-emerald-400" x-text="fmtMap(an.paid)"></p>
                     <div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden" role="progressbar" :aria-valuenow="paidPct" aria-valuemin="0" aria-valuemax="100" aria-label="Share of due dates paid"><div class="h-full rounded-full" :style="`width:${paidPct}%;background:${colors.obl}`"></div></div>
                     <p class="text-[10px] text-slate-500 mt-1" x-text="an.paidCount + ' of ' + an.occ.length + ' paid (' + paidPct + '%)'"></p></div>
@@ -143,37 +168,63 @@
                 <div class="kpi"><p class="kpi-l">Actual spend (Expense Log)</p><p class="kpi-v text-purple-400" x-text="fmtMap(an.actual)"></p><p class="text-[10px] text-slate-500 mt-1" x-text="an.logCount + ' log row(s)' + (spendDelta ? ' · ' + spendDelta : '')"></p></div>
             </div>
 
-            <!-- Needs attention -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
-                <template x-if="overdueList.length">
-                    <div class="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-2">
-                        <h3 class="text-xs font-bold text-red-300 uppercase tracking-wider"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Overdue commitments <span class="font-normal" x-text="'(' + overdueList.length + ')'"></span></h3>
-                        <div class="max-h-56 overflow-y-auto space-y-1.5">
-                            <template x-for="o in overdueList" :key="o.c.id">
-                                <div class="flex items-center justify-between gap-3 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 text-xs">
-                                    <div class="min-w-0"><p class="font-semibold text-white truncate" x-text="o.c.name"></p><p class="text-red-300/80" x-text="statusSub(o.c)"></p></div>
-                                    <div class="text-right shrink-0"><p class="font-bold text-slate-100" x-text="money(o.c.amount, o.c.currency)"></p><button @click="markAsPaid(o.c)" class="text-[11px] text-emerald-400 hover:underline">Pay oldest</button></div>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </template>
-                <div class="card p-4 space-y-2" :class="overdueList.length ? '' : 'lg:col-span-2'">
-                    <div class="flex flex-wrap items-center justify-between gap-2">
-                        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-hourglass-half text-amber-400 mr-1"></i> Still to pay in the next 30 days</h3>
-                        <span class="text-xs font-semibold text-amber-300" x-text="next30.items.length ? fmtMap(next30.total).replace(/\n/g, ' + ') : ''"></span>
-                    </div>
-                    <p x-show="!next30.items.length" class="text-xs text-slate-500">Nothing left to pay in the next 30 days.</p>
-                    <div class="max-h-56 overflow-y-auto space-y-1.5">
-                        <template x-for="o in next30.items" :key="o.id + '|' + o.date">
-                            <div class="flex items-center gap-2 text-xs bg-slate-950/50 rounded-xl px-2.5 py-1.5 border border-slate-800/70">
-                                <span class="text-slate-400 w-20 shrink-0" x-text="o.days === 0 ? 'Today' : o.days === 1 ? 'Tomorrow' : 'in ' + o.days + ' days'"></span>
-                                <span class="flex-1 truncate text-white" x-text="o.c.name"></span>
-                                <span class="text-slate-200 font-semibold tabular-nums" x-text="money(o.amount, o.currency)"></span>
+            <!-- Overdue now -->
+            <template x-if="overdueList.length">
+                <div class="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-2">
+                    <h3 class="text-xs font-bold text-red-300 uppercase tracking-wider"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Overdue commitments <span class="font-normal" x-text="'(' + overdueList.length + ')'"></span></h3>
+                    <div class="max-h-56 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+                        <template x-for="o in overdueList" :key="o.c.id">
+                            <div class="flex items-center justify-between gap-3 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 text-xs">
+                                <div class="min-w-0"><p class="font-semibold text-white truncate" x-text="o.c.name"></p><p class="text-red-300/80" x-text="statusSub(o.c)"></p></div>
+                                <div class="text-right shrink-0"><p class="font-bold text-slate-100" x-text="money(o.c.amount, o.c.currency)"></p><button @click="markAsPaid(o.c)" class="text-[11px] text-emerald-400 hover:underline">Pay oldest</button></div>
                             </div>
                         </template>
                     </div>
                 </div>
+            </template>
+
+            <!-- Still to pay in the next N days -->
+            <div class="card p-4 space-y-2" data-nosave>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex flex-wrap items-center gap-1.5"><i class="fa-solid fa-hourglass-half text-amber-400"></i> Still to pay in the next
+                        <select x-model.number="dashH" aria-label="Days ahead" class="inp !w-auto !min-h-0 !py-0.5 !pl-2 !text-xs font-bold"><template x-for="h in horizons" :key="h"><option :value="h" :selected="h === dashH" x-text="h"></option></template></select> days</h3>
+                    <span class="text-xs font-semibold text-amber-300" x-text="next30.items.length ? fmtMap(next30.total).replace(/\n/g, ' + ') : ''"></span>
+                </div>
+                <p x-show="next30.pausedCount" class="text-[10px] text-purple-300" x-text="'Not counted (paused for ' + thisMonthLabel + '): ' + fmtMap(next30.paused).replace(/\n/g, ' + ')"></p>
+                <p x-show="!next30.items.length" class="text-xs text-slate-500" x-text="'Nothing left to pay in the next ' + dashH + ' days.'"></p>
+                <div class="max-h-56 overflow-y-auto space-y-1.5">
+                    <template x-for="o in next30.items" :key="o.id + '|' + o.date">
+                        <div class="flex items-center gap-2 text-xs bg-slate-950/50 rounded-xl px-2.5 py-1.5 border border-slate-800/70">
+                            <span class="text-slate-400 w-20 shrink-0" x-text="o.days === 0 ? 'Today' : o.days === 1 ? 'Tomorrow' : 'in ' + o.days + ' days'"></span>
+                            <span class="flex-1 truncate text-white" x-text="o.c.name"></span>
+                            <span class="text-slate-200 font-semibold tabular-nums" x-text="money(o.amount, o.currency)"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Due dates in the window (directly below "still to pay") -->
+            <div class="card p-4 space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-list-check text-sky-400 mr-1"></i> Due dates in this window</h3>
+                    <div class="flex flex-wrap gap-1" role="group" aria-label="Filter by status" data-nosave>
+                        <template x-for="k in dueKeys" :key="k">
+                            <button @click="dueFilter = k" :aria-pressed="dueFilter === k" :class="dueFilter === k ? 'bg-sky-600 text-onaccent' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition" x-text="k + ' (' + dueCounts[k] + ')'"></button>
+                        </template>
+                    </div>
+                </div>
+                <p x-show="!dueAll.length" class="text-xs text-slate-500">No commitment has a due date inside this window (check each commitment's start / end dates).</p>
+                <p x-show="dueAll.length && !dueRows.length" class="text-xs text-slate-500">No due dates with this status in the window.</p>
+                <div class="max-h-72 overflow-y-auto space-y-1">
+                    <template x-for="(o, i) in dueRows.slice(0, 150)" :key="o.id + '|' + o.date">
+                        <div class="flex items-center gap-2 text-xs bg-slate-950/50 rounded-xl px-2.5 py-1.5 border border-slate-800/70" :class="o.paused ? 'opacity-70' : ''">
+                            <span class="rowno shrink-0" x-text="i + 1"></span>
+                            <div class="flex-1 min-w-0"><p class="truncate text-white" x-text="o.c.name"></p><p class="text-[10px] text-slate-400" x-text="fmtDate(o.date) + (o.paused ? ' · not counted this month' : '')"></p></div>
+                            <div class="text-right shrink-0"><p class="text-slate-200 font-semibold tabular-nums" :class="o.paused ? 'line-through' : ''" x-text="money(o.amount, o.currency)"></p><span class="badge" :class="o.paused ? 'bg-purple-500/10 text-purple-300' : o.paid ? 'bg-emerald-500/10 text-emerald-400' : o.overdue ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'" x-text="dueState(o)"></span></div>
+                        </div>
+                    </template>
+                </div>
+                <p x-show="dueRows.length > 150" class="text-[10px] text-slate-500" x-text="'Showing the first 150 of ' + dueRows.length"></p>
             </div>
 
             <!-- Charts -->
@@ -197,18 +248,31 @@
                 </div>
             </div>
 
-            <!-- Where the money went + fixed-term progress -->
+            <!-- Where the money went / will go + fixed-term progress -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <div class="card p-4 space-y-3">
-                    <div><h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-ranking-star mr-1" :style="`color:${colors.act}`"></i> Where the money went</h3>
-                        <p class="text-[10px] text-slate-500" x-text="'Actual spend by category · ' + curSel + ' · total ' + money(catRank.total, curSel)"></p></div>
-                    <p x-show="!catRank.rows.length" class="text-xs text-slate-500" x-text="'Nothing logged in ' + curSel + ' in this window.'"></p>
-                    <template x-for="r in catRank.rows" :key="r.cat">
-                        <div class="text-xs" :title="r.count + ' expense row(s)'">
-                            <div class="flex justify-between gap-2"><span class="truncate text-slate-200" x-text="r.cat + (r.folded ? ' (' + r.folded + ' small categories)' : '')"></span><span class="text-slate-300 tabular-nums shrink-0" x-text="money(r.total, curSel) + ' · ' + Math.round(r.share * 100) + '%'"></span></div>
-                            <div class="mt-1 h-2 rounded-full bg-slate-800 overflow-hidden"><div class="h-full rounded-r-full" :style="`width:${Math.max(2, r.share * 100)}%;background:${colors.act}`"></div></div>
+                <div class="card p-4 space-y-3" data-nosave>
+                    <div><h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-ranking-star mr-1" :style="`color:${colors.act}`"></i> <span x-text="bdTitle"></span></h3>
+                        <p class="text-[10px] text-slate-500" x-text="bdSub + ' · ' + win.label.replace(/ \(.*\)$/, '')"></p></div>
+                    <div class="flex flex-wrap gap-2">
+                        <select x-model="bdMode" aria-label="What to show" class="inp !w-auto"><option value="auto">Auto (follows the window)</option><option value="actual">Spent (Expense Log)</option><option value="projected">Spent + still to pay</option><option value="outstanding">Still to pay (future money)</option><option value="planned">All due dates (planned)</option></select>
+                        <select x-model="bdGroup" aria-label="Group by" class="inp !w-auto"><option value="category">By category</option><option value="item">By item</option></select>
+                    </div>
+                    <div x-show="breakdown.mode === 'projected' || breakdown.mode === 'planned'" class="flex flex-wrap gap-3 text-[10px] text-slate-400">
+                        <span><span class="inline-block w-2.5 h-2.5 rounded-sm align-middle mr-1" :style="`background:${colors.act}`"></span><span x-text="breakdown.mode === 'planned' ? 'Paid' : 'Spent'"></span></span>
+                        <span><span class="inline-block w-2.5 h-2.5 rounded-sm align-middle mr-1" :style="`background:${colors.obl}`"></span>Still to pay</span>
+                    </div>
+                    <p x-show="!breakdown.rows.length" class="text-xs text-slate-500" x-text="bdEmpty"></p>
+                    <template x-for="r in breakdown.rows" :key="r.cat">
+                        <div class="text-xs" :title="r.count + ' row(s)'">
+                            <div class="flex justify-between gap-2">
+                                <button type="button" @click="openInLog(r)" :disabled="!(r.a > 0 && !r.folded)" :title="r.a > 0 && !r.folded ? 'Show these expenses in the Expense Log' : ''" class="truncate text-left text-slate-200 enabled:hover:underline disabled:cursor-default" x-text="r.cat + (r.folded ? ' (' + r.folded + ' smaller)' : '')"></button>
+                                <span class="text-slate-300 tabular-nums shrink-0" x-text="money(r.total, curSel) + ' · ' + Math.round(r.share * 100) + '%'"></span></div>
+                            <div class="mt-1 h-2 rounded-full bg-slate-800 overflow-hidden flex" role="img" :aria-label="r.cat + ': ' + money(r.a, curSel) + ' spent or paid, ' + money(r.o, curSel) + ' still to pay'">
+                                <div class="h-full" :style="`width:${bdBar(r)[0]}%;background:${colors.act}`"></div><div class="h-full" :style="`width:${bdBar(r)[1]}%;background:${colors.obl}`"></div></div>
+                            <p x-show="r.a && r.o" class="text-[10px] text-slate-500 mt-0.5" x-text="money(r.a, curSel) + (breakdown.mode === 'planned' ? ' paid' : ' spent') + ' · ' + money(r.o, curSel) + ' still to pay'"></p>
                         </div>
                     </template>
+                    <div class="flex justify-end"><button @click="openInLog()" class="text-[11px] text-sky-400 hover:underline"><i class="fa-solid fa-receipt mr-1"></i>Open this window in the Expense Log</button></div>
                 </div>
                 <div class="card p-4 space-y-3">
                     <div class="flex flex-wrap items-start justify-between gap-2"><div><h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-bars-progress mr-1" :style="`color:${colors.obl}`"></i> Fixed-term commitments</h3>
@@ -227,30 +291,6 @@
                 </div>
             </div>
 
-            <!-- Due dates in window -->
-            <div class="card p-4 space-y-2">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-list-check text-sky-400 mr-1"></i> Due dates in this window</h3>
-                    <div class="flex flex-wrap gap-1" role="group" aria-label="Filter by status" data-nosave>
-                        <template x-for="k in ['All', 'Overdue', 'Pending', 'Paid']" :key="k">
-                            <button @click="dueFilter = k" :aria-pressed="dueFilter === k" :class="dueFilter === k ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition" x-text="k + ' (' + dueCounts[k] + ')'"></button>
-                        </template>
-                    </div>
-                </div>
-                <p x-show="!an.occ.length" class="text-xs text-slate-500">No commitment has a due date inside this window (check each commitment's start / end dates).</p>
-                <p x-show="an.occ.length && !dueRows.length" class="text-xs text-slate-500">No due dates with this status in the window.</p>
-                <div class="max-h-72 overflow-y-auto space-y-1">
-                    <template x-for="(o, i) in dueRows.slice(0, 150)" :key="o.id + '|' + o.date">
-                        <div class="flex items-center gap-2 text-xs bg-slate-950/50 rounded-xl px-2.5 py-1.5 border border-slate-800/70">
-                            <span class="rowno shrink-0" x-text="i + 1"></span>
-                            <div class="flex-1 min-w-0"><p class="truncate text-white" x-text="o.c.name"></p><p class="text-[10px] text-slate-400" x-text="fmtDate(o.date)"></p></div>
-                            <div class="text-right shrink-0"><p class="text-slate-200 font-semibold tabular-nums" x-text="money(o.amount, o.currency)"></p><span class="badge" :class="o.paid ? 'bg-emerald-500/10 text-emerald-400' : o.overdue ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'" x-text="dueState(o)"></span></div>
-                        </div>
-                    </template>
-                </div>
-                <p x-show="dueRows.length > 150" class="text-[10px] text-slate-500" x-text="'Showing the first 150 of ' + dueRows.length"></p>
-            </div>
-
             <!-- Upcoming events & tasks -->
             <template x-if="upcomingEvents.length">
                 <div class="card p-4 space-y-2">
@@ -264,7 +304,6 @@
                 </div>
             </template>
 
-            <div class="flex justify-end"><button @click="clearAllData()" class="text-[11px] text-slate-500 hover:text-red-400 flex items-center gap-1.5"><i class="fa-solid fa-trash-can"></i> Clear all data</button></div>
         </div></template>
 
         <!-- ======================= PAY COMMITMENTS ======================= -->
@@ -275,12 +314,25 @@
                 <div class="flex gap-2"><button @click="addRow('c')" class="btn btn-sky"><i class="fa-solid fa-plus"></i> Add Commitment</button><button @click="saveAll()" class="btn btn-em"><i class="fa-solid fa-floppy-disk"></i> Save DB</button></div>
             </div>
 
+            <!-- Active / Archived -->
+            <div class="flex flex-wrap items-center justify-between gap-2" data-nosave>
+                <div class="seg" role="group" aria-label="Which commitments">
+                    <button @click="setPayView('active')" :aria-pressed="payView === 'active' ? 'true' : 'false'"><i class="fa-solid fa-list mr-1"></i>Active <span x-text="'(' + activeCount + ')'"></span></button>
+                    <button @click="setPayView('archived')" :aria-pressed="payView === 'archived' ? 'true' : 'false'"><i class="fa-solid fa-box-archive mr-1"></i>Archived <span x-text="'(' + archivedCount + ')'"></span></button>
+                </div>
+                <template x-if="payView === 'active' && pausedNow.items.length">
+                    <button @click="f = { ...f, status: f.status === 'Paused' ? 'All' : 'Paused' }" class="text-[11px] text-purple-300 hover:underline text-left"><i class="fa-solid fa-pause mr-1"></i><span x-text="pausedNow.items.length + ' paused for ' + thisMonthLabel + ' · ' + fmtMap(pausedNow.total).replace(/\n/g, ' + ') + ' not counted this month'"></span></button>
+                </template>
+            </div>
+            <p x-show="payView === 'archived'" class="text-xs text-slate-400">Archived commitments are left out of every total, chart and list until you restore them. Their past payments stay in the Expense Log (as actual spend).</p>
+            <p x-show="payView === 'active'" class="text-[11px] text-slate-500"><i class="fa-solid fa-pause mr-1"></i><b>Pause</b> leaves this month’s due date out of the dashboard (it comes back by itself next month) · <i class="fa-solid fa-box-archive mx-1"></i><b>Archive</b> leaves it out of everything until restored.</p>
+
             <div data-nosave class="panel p-3 grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
                 <input type="search" x-model="f.search" placeholder="Search name, notes…" aria-label="Search" class="inp col-span-2 sm:col-span-1">
                 <select x-model="f.region" aria-label="Region" class="inp"><option value="All">All regions</option><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === f.region" x-text="r"></option></template></select>
                 <select x-model="f.frequency" aria-label="Frequency" class="inp"><option value="All">All frequencies</option><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === f.frequency" x-text="r"></option></template></select>
                 <select x-model="f.currency" aria-label="Currency" class="inp"><option value="All">All currencies</option><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === f.currency" x-text="r"></option></template></select>
-                <select x-model="f.status" aria-label="Status" class="inp"><option value="All">All statuses</option><option>Overdue</option><option>Pending</option><option>Paid</option><option>Completed</option><option>Upcoming</option></select>
+                <select x-model="f.status" :disabled="payView === 'archived'" aria-label="Status" class="inp disabled:opacity-40"><option value="All">All statuses</option><option>Overdue</option><option>Pending</option><option>Paused</option><option>Paid</option><option>Completed</option><option>Upcoming</option></select>
                 <select x-model="f.sortBy" aria-label="Sort" class="inp"><option value="due">Sort: next due</option><option value="name">Sort: name</option><option value="amount">Sort: amount</option><option value="category">Sort: category</option><option value="start">Sort: start date</option><option value="end">Sort: end date</option></select>
             </div>
             <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400" data-nosave>
@@ -291,13 +343,13 @@
             <template x-if="selectedItems.length > 0">
                 <div class="bg-sky-950/40 border border-sky-800/50 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs" data-nosave>
                     <span><b x-text="selectedItems.length + ' selected'"></b> · <span class="text-sky-300" x-text="selectedTotalsDisplay"></span></span>
-                    <span class="flex gap-2"><button @click="markSelectedAsPaid()" class="btn btn-em !py-1">Mark paid</button><button @click="selectedRowIds = []" class="btn btn-ghost !py-1">Clear</button></span>
+                    <span class="flex flex-wrap gap-2"><button @click="markSelectedAsPaid()" class="btn btn-em !py-1">Mark paid</button><button @click="pauseSelected()" class="btn btn-ghost !py-1"><i class="fa-solid fa-pause"></i> Pause</button><button @click="archiveSelected()" class="btn btn-ghost !py-1"><i class="fa-solid fa-box-archive"></i> Archive</button><button @click="selectedRowIds = []" class="btn btn-ghost !py-1">Clear</button></span>
                 </div>
             </template>
-            <p x-show="!cRows.length && !loading" class="text-center text-xs text-slate-500 py-8">No commitments match. Use “Add Commitment” to create one.</p>
+            <p x-show="!cRows.length && !loading" class="text-center text-xs text-slate-500 py-8" x-text="payView === 'archived' ? 'No archived commitments match.' : 'No commitments match. Use “Add Commitment” to create one.'"></p>
 
             <!-- Mobile / tablet: read-only cards -->
-            <template x-if="!isDesktop"><div class="space-y-2">
+            <template x-if="!isDesktop && payView === 'active'"><div class="space-y-2">
                 <template x-for="(item, i) in cRows" :key="item.id">
                     <div class="card p-3 text-xs" :data-row="item.id" :class="flashId === item.id ? 'ring-2 ring-sky-400' : ''">
                         <div class="flex items-start gap-2">
@@ -310,9 +362,14 @@
                         <p class="text-slate-400 mt-2"><i class="fa-solid fa-calendar-days mr-1"></i><span x-text="scheduleText(item)"></span><span x-show="rangeText(item)"> · <span x-text="rangeText(item)"></span></span></p>
                         <p class="text-[11px]" :class="st(item).status === 'Overdue' ? 'text-red-300' : 'text-slate-500'" x-text="statusSub(item)"></p>
                         <p x-show="errList('c', item).length" class="text-[11px] text-red-400" x-text="errList('c', item).join(' • ')"></p>
-                        <div class="flex gap-2 mt-2 pt-2 border-t border-slate-800">
-                            <button @click="markAsPaid(item)" x-show="st(item).status !== 'Completed'" class="btn btn-em !py-1"><i class="fa-solid fa-check"></i> Mark paid</button>
-                            <button @click="markAsPending(item)" x-show="st(item).paidCount > 0" class="btn btn-ghost !py-1" aria-label="Undo last payment"><i class="fa-solid fa-rotate-left"></i></button>
+                        <!-- the main button always reflects the state: Mark paid (unpaid) / Mark pending (paid) / Resume (paused) -->
+                        <div class="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-slate-800" data-pay-actions>
+                            <template x-if="payState(item).kind === 'pay'"><button @click="markAsPaid(item)" class="btn btn-em !py-1" data-act="pay"><i class="fa-solid fa-check"></i> Mark paid<span x-show="payState(item).date" class="font-normal opacity-90" x-text="'· ' + shortDate(payState(item).date)"></span></button></template>
+                            <template x-if="payState(item).kind === 'undo'"><button @click="markAsPending(item)" class="btn btn-amber !py-1" data-act="undo"><i class="fa-solid fa-rotate-left"></i> Mark pending</button></template>
+                            <template x-if="payState(item).kind === 'resume'"><button @click="togglePause(item)" class="btn btn-sky !py-1" data-act="resume"><i class="fa-solid fa-play"></i> Resume</button></template>
+                            <button x-show="payState(item).kind === 'pay' && st(item).paidCount > 0" @click="markAsPending(item)" class="btn btn-ghost !py-1" aria-label="Undo last payment" title="Undo last payment"><i class="fa-solid fa-rotate-left"></i></button>
+                            <button x-show="payState(item).kind === 'pay'" @click="togglePause(item)" class="btn btn-ghost !py-1" title="Leave this month's due date out of the dashboard"><i class="fa-solid fa-pause"></i> Pause</button>
+                            <button @click="setArchived(item, true)" class="btn btn-ghost !py-1" aria-label="Archive" title="Archive"><i class="fa-solid fa-box-archive"></i></button>
                             <button @click="openModal('c', item)" class="btn btn-ghost !py-1 ml-auto"><i class="fa-solid fa-pen"></i> Edit</button>
                             <button @click="deleteRow('c', item)" class="btn btn-red !py-1" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>
                         </div>
@@ -321,8 +378,8 @@
             </div></template>
 
             <!-- Desktop: inline-editable table -->
-            <template x-if="isDesktop"><div class="card">
-                <table class="w-full table-fixed text-xs"><colgroup><col class="w-[4%]"><col class="w-[3%]"><col class="w-[17%]"><col class="w-[18%]"><col class="w-[16%]"><col class="w-[16%]"><col class="w-[11%]"><col class="w-[15%]"></colgroup><thead class="bg-slate-950/50 border-b border-slate-800"><tr>
+            <template x-if="isDesktop && payView === 'active'"><div class="card">
+                <table class="w-full table-fixed text-xs"><colgroup><col class="w-[4%]"><col class="w-[3%]"><col class="w-[16%]"><col class="w-[17%]"><col class="w-[16%]"><col class="w-[15%]"><col class="w-[12%]"><col class="w-[17%]"></colgroup><thead class="bg-slate-950/50 border-b border-slate-800"><tr>
                         <th class="th !whitespace-normal">#</th><th class="th !whitespace-normal"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected" data-nosave aria-label="Select all" class="rounded bg-slate-950 border-slate-700"></th>
                         <th class="th !whitespace-normal">Commitment / Category</th><th class="th !whitespace-normal">Amount / Region</th><th class="th !whitespace-normal">Frequency / Due</th><th class="th !whitespace-normal">Start / End date</th><th class="th !whitespace-normal">Status</th><th class="th !whitespace-normal text-center">Actions</th></tr></thead>
 <tbody class="divide-y divide-slate-800/70">
@@ -330,7 +387,7 @@
                             <tr :data-row="item.id" class="hover:bg-slate-800/30" :class="[item._draft ? 'bg-sky-950/30' : '', flashId === item.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
                                 <td class="td"><span class="rowno" x-text="i + 1"></span></td>
                                 <td class="td"><input type="checkbox" :value="item.id" x-model.number="selectedRowIds" :disabled="item._draft" data-nosave aria-label="Select row" class="rounded bg-slate-950 border-slate-700 disabled:opacity-30"></td>
-                                <td class="td"><div class="space-y-1"><input type="text" x-model="item.name" :class="bad('c', item, 'name')" placeholder="Name" aria-label="Name" class="inp"><input type="text" list="catList" x-model="item.category" aria-label="Category" class="inp"></div></td>
+                                <td class="td"><div class="space-y-1"><input type="text" x-model="item.name" :class="bad('c', item, 'name')" placeholder="Name" aria-label="Name" class="inp"><div class="relative" x-data="combo('categoryOptions')" x-modelable="value" x-model="item.category" x-bind="root"><input x-model="value" x-bind="field" aria-label="Category" placeholder="Category" class="inp !pr-8"><button x-bind="toggle" aria-label="Show category suggestions" class="absolute right-0 inset-y-0 px-2.5 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></div></td>
                                 <td class="td"><div class="space-y-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="item.amount" :class="bad('c', item, 'amount')" aria-label="Amount" class="inp"><div class="flex gap-1"><select x-model="item.region" aria-label="Region" class="inp flex-[5]"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === item.region" x-text="r"></option></template></select><select x-model="item.currency" aria-label="Currency" class="inp flex-[4]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === item.currency" x-text="r"></option></template></select></div></div></td>
                                 <td class="td"><div class="space-y-1"><select x-model="item.frequency" @change="$nextTick(() => onFreqChange(item))" :class="bad('c', item, 'frequency')" aria-label="Frequency" class="inp"><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === item.frequency" x-text="r"></option></template></select><div><template x-if="item.frequency === 'Monthly'"><select x-model.number="item.dueDay" :class="bad('c', item, 'dueDay')" aria-label="Due day" class="inp"><option value="">Day</option><template x-for="d in dayList('')" :key="d"><option :value="d" :selected="d === Number(item.dueDay)" x-text="d"></option></template></select></template>
                                     <template x-if="item.frequency === 'Yearly' || item.frequency === 'Bi-Monthly'"><div class="flex gap-1" :title="item.frequency === 'Bi-Monthly' ? 'First due month; repeats every 2 months' : 'Due once a year'">
@@ -343,14 +400,38 @@
                                     <p class="text-[10px] text-slate-500 mt-0.5" x-text="statusSub(item)"></p></td>
                                 <td class="td"><div class="flex flex-wrap items-center justify-center gap-x-0.5"><template x-if="item._draft"><span><button @click="saveRow('c', item)" class="btn btn-sky !py-1" title="Save this row"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('c', item)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
                                     <template x-if="!item._draft"><span>
-                                        <button @click="markAsPaid(item)" x-show="st(item).status !== 'Completed'" title="Mark next due date as paid" aria-label="Mark paid" class="text-emerald-400 hover:text-emerald-300 p-1.5"><i class="fa-solid fa-circle-check"></i></button>
-                                        <button @click="markAsPending(item)" x-show="st(item).paidCount > 0" title="Undo last payment" aria-label="Undo last payment" class="text-slate-400 hover:text-white p-1.5"><i class="fa-solid fa-rotate-left"></i></button>
+                                        <template x-if="payState(item).kind === 'pay'"><button @click="markAsPaid(item)" :title="'Mark paid' + (payState(item).date ? ' (due ' + fmtDate(payState(item).date) + ')' : '')" aria-label="Mark paid" data-act="pay" class="text-emerald-400 hover:text-emerald-300 p-1.5"><i class="fa-solid fa-circle-check"></i></button></template>
+                                        <template x-if="payState(item).kind === 'undo'"><button @click="markAsPending(item)" title="Mark pending (removes this payment)" aria-label="Mark pending" data-act="undo" class="text-amber-400 hover:text-amber-300 p-1.5"><i class="fa-solid fa-rotate-left"></i></button></template>
+                                        <template x-if="payState(item).kind === 'resume'"><button @click="togglePause(item)" title="Resume (count it this month again)" aria-label="Resume" data-act="resume" class="text-purple-300 hover:text-purple-200 p-1.5"><i class="fa-solid fa-play"></i></button></template>
+                                        <button @click="markAsPending(item)" x-show="payState(item).kind === 'pay' && st(item).paidCount > 0" title="Undo last payment" aria-label="Undo last payment" class="text-slate-400 hover:text-white p-1.5"><i class="fa-solid fa-rotate-left"></i></button>
+                                        <button @click="togglePause(item)" x-show="payState(item).kind === 'pay'" title="Pause for this month (leave it out of this month's dashboard)" aria-label="Pause" class="text-slate-400 hover:text-purple-300 p-1.5"><i class="fa-solid fa-pause"></i></button>
+                                        <button @click="setArchived(item, true)" title="Archive (leave out of all totals)" aria-label="Archive" class="text-slate-400 hover:text-white p-1.5"><i class="fa-solid fa-box-archive"></i></button>
                                         <button @click="openModal('c', item)" title="Edit (notes, method…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1.5"><i class="fa-solid fa-pen"></i></button>
                                         <button @click="deleteRow('c', item)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1.5"><i class="fa-solid fa-trash"></i></button></span></template></div></td>
                             </tr>
                         </template>
                     </tbody>
                 </table></div></template>
+
+            <!-- Archived (desktop + mobile) -->
+            <template x-if="payView === 'archived'"><div class="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                <template x-for="(item, i) in cRows" :key="item.id">
+                    <div class="card p-3 text-xs" :data-row="item.id" :class="flashId === item.id ? 'ring-2 ring-sky-400' : ''">
+                        <div class="flex items-start gap-2">
+                            <span class="rowno mt-0.5" x-text="i + 1"></span>
+                            <div class="flex-1 min-w-0"><p class="font-bold text-white text-sm truncate" x-text="item.name || 'Unnamed'"></p>
+                                <p class="text-slate-400 truncate" x-text="[item.category, item.region, scheduleText(item)].filter(Boolean).join(' · ')"></p></div>
+                            <div class="text-right shrink-0"><p class="font-bold text-slate-100" x-text="money(item.amount, item.currency)"></p><span class="badge bg-slate-500/20 text-slate-400">Archived</span></div>
+                        </div>
+                        <p x-show="rangeText(item)" class="text-slate-500 mt-1" x-text="rangeText(item)"></p>
+                        <div class="flex flex-wrap gap-2 mt-2 pt-2 border-t border-slate-800">
+                            <button @click="setArchived(item, false)" class="btn btn-sky !py-1"><i class="fa-solid fa-box-open"></i> Restore</button>
+                            <button @click="openModal('c', item)" class="btn btn-ghost !py-1 ml-auto"><i class="fa-solid fa-pen"></i> Edit</button>
+                            <button @click="deleteRow('c', item)" class="btn btn-red !py-1" aria-label="Delete"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </div>
+                </template>
+            </div></template>
         </div>
 
         <!-- ======================= EXPENSE LOG ======================= -->
@@ -428,8 +509,8 @@
                             <tr :data-row="l.id" class="hover:bg-slate-800/30" :class="[l._draft ? 'bg-sky-950/30' : '', flashId === l.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
                                 <td class="td"><span class="rowno" x-text="lNo(i)"></span></td>
                                 <td class="td"><div class="space-y-1"><input type="date" x-model="l.actualDate" :class="bad('l', l, 'actualDate')" aria-label="Actual date" class="inp"><input type="date" x-model="l.commitmentDate" :class="bad('l', l, 'commitmentDate')" aria-label="Commitment date" class="inp"></div></td>
-                                <td class="td"><div class="space-y-1"><input type="text" x-model="l.item" :class="bad('l', l, 'item')" aria-label="Description" class="inp"><select x-model.number="l.commitmentId" @change="$nextTick(() => onLinkChange(l))" :class="bad('l', l, 'commitmentId')" aria-label="Linked commitment" class="inp"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(l.commitmentId)" x-text="c.name"></option></template></select></div></td>
-                                <td class="td"><div class="space-y-1"><input type="text" list="catList" x-model="l.category" aria-label="Category" class="inp"><input type="text" list="methodList" x-model="l.method" aria-label="Method" class="inp"></div></td>
+                                <td class="td"><div class="space-y-1"><input type="text" x-model="l.item" :class="bad('l', l, 'item')" aria-label="Description" class="inp"><select x-model.number="l.commitmentId" @change="$nextTick(() => onLinkChange(l))" :class="bad('l', l, 'commitmentId')" aria-label="Linked commitment" class="inp"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(l.commitmentId)" x-text="c.name + (c.archived ? ' (archived)' : '')"></option></template></select></div></td>
+                                <td class="td"><div class="space-y-1"><div class="relative" x-data="combo('categoryOptions')" x-modelable="value" x-model="l.category" x-bind="root"><input x-model="value" x-bind="field" aria-label="Category" placeholder="Category" class="inp !pr-8"><button x-bind="toggle" aria-label="Show category suggestions" class="absolute right-0 inset-y-0 px-2.5 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div><div class="relative" x-data="combo('methodOptions')" x-modelable="value" x-model="l.method" x-bind="root"><input x-model="value" x-bind="field" aria-label="Method" placeholder="Method" class="inp !pr-8"><button x-bind="toggle" aria-label="Show method suggestions" class="absolute right-0 inset-y-0 px-2.5 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></div></td>
                                 <td class="td"><div class="space-y-1"><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="l.amount" :class="bad('l', l, 'amount')" aria-label="Amount" class="inp"><div class="flex gap-1"><select x-model="l.region" aria-label="Region" class="inp flex-[5]"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === l.region" x-text="r"></option></template></select><select x-model="l.currency" aria-label="Currency" class="inp flex-[4]"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === l.currency" x-text="r"></option></template></select></div></div></td>
                                 <td class="td"><div class="flex flex-wrap items-center justify-center gap-x-0.5"><span x-show="errList('l', l).length" :title="errList('l', l).join(', ')" class="text-red-400 mr-1"><i class="fa-solid fa-triangle-exclamation"></i></span>
                                     <template x-if="l._draft"><span><button @click="saveRow('l', l)" class="btn btn-sky !py-1"><i class="fa-solid fa-check"></i> Save row</button> <button @click="deleteRow('l', l)" class="btn btn-ghost !py-1" aria-label="Discard draft"><i class="fa-solid fa-xmark"></i></button></span></template>
@@ -498,13 +579,57 @@
                     </tbody>
                 </table></div></template>
         </div>
+
+        <!-- ======================= SETTINGS ======================= -->
+        <div x-show="tab === 'settings'" style="display:none" class="space-y-3 max-w-3xl mx-auto" data-nosave>
+            <div class="card p-4"><h2 class="text-sm font-bold text-white"><i class="fa-solid fa-gear text-sky-400 mr-1"></i> Settings</h2>
+                <p class="text-xs text-slate-400">Saved inside this tracker’s database, so they travel with Export DB / Import DB. (The theme is also remembered in this browser so it loads without a flash.)</p></div>
+
+            <section class="card p-4 space-y-3" aria-labelledby="setSave">
+                <h3 id="setSave" class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-floppy-disk mr-1 text-emerald-400"></i> Saving</h3>
+                <div class="flex items-start justify-between gap-4">
+                    <div class="min-w-0"><p id="asLbl" class="text-sm font-semibold text-white">Auto-save</p>
+                        <p class="text-xs text-slate-400" x-text="settings.autoSave ? 'On: edits you type in the tables are saved about a second after you stop typing.' : 'Off (default): edits you type in the tables stay unsaved until you press Save DB or “Save now”. The header shows when something is unsaved.'"></p>
+                        <p class="text-[11px] text-slate-500 mt-1">Either way, actions are saved straight away: Mark paid / pending, Pause, Archive, Save row, Delete and the Save button of the edit form.</p></div>
+                    <button type="button" role="switch" :aria-checked="settings.autoSave ? 'true' : 'false'" aria-labelledby="asLbl" @click="setAutoSave(!settings.autoSave)" class="switch mt-1" id="autoSaveSwitch"><span></span></button>
+                </div>
+                <p x-show="unsavedCount" class="text-xs text-amber-300"><i class="fa-solid fa-circle-exclamation mr-1"></i><span x-text="unsavedText"></span> <button @click="saveAll()" class="underline font-semibold ml-1">Save now</button></p>
+            </section>
+
+            <section class="card p-4 space-y-3" aria-labelledby="setTheme">
+                <h3 id="setTheme" class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-circle-half-stroke mr-1 text-sky-400"></i> Appearance</h3>
+                <div class="seg" role="radiogroup" aria-label="Theme">
+                    <button role="radio" :aria-checked="settings.theme === 'system' ? 'true' : 'false'" @click="setTheme('system')"><i class="fa-solid fa-display mr-1"></i>System</button>
+                    <button role="radio" :aria-checked="settings.theme === 'light' ? 'true' : 'false'" @click="setTheme('light')"><i class="fa-solid fa-sun mr-1"></i>Light</button>
+                    <button role="radio" :aria-checked="settings.theme === 'dark' ? 'true' : 'false'" @click="setTheme('dark')"><i class="fa-solid fa-moon mr-1"></i>Dark</button>
+                </div>
+                <p class="text-xs text-slate-400" x-text="settings.theme === 'system' ? 'Follows your device setting (now ' + (sysDark ? 'dark' : 'light') + ') and switches when the device does.' : 'Always ' + settings.theme + ', whatever the device setting.'"></p>
+            </section>
+
+            <section class="card p-4 space-y-3" aria-labelledby="setData">
+                <h3 id="setData" class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-database mr-1 text-sky-400"></i> Data</h3>
+                <dl class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                    <div class="panel p-2.5 min-w-0"><dt class="lbl !mb-0.5">Imported from</dt><dd class="text-slate-200 break-all" x-text="settings.dbName || 'Not imported (created in this browser)'"></dd></div>
+                    <div class="panel p-2.5 min-w-0"><dt class="lbl !mb-0.5">Last export</dt><dd class="text-slate-200 break-all" x-text="settings.lastExport || 'Never exported'"></dd></div>
+                    <div class="panel p-2.5 min-w-0"><dt class="lbl !mb-0.5">State</dt><dd :class="unsavedCount ? 'text-amber-300' : settings.exportPending ? 'text-amber-300' : 'text-emerald-400'" x-text="unsavedCount ? 'Unsaved changes in this browser' : settings.exportPending ? 'Saved in this browser · changed since the last export' : 'Saved · same as the last export / import'"></dd></div>
+                </dl>
+                <div class="flex flex-wrap gap-2">
+                    <button @click="exportSQLite()" class="btn btn-em"><i class="fa-solid fa-download"></i> Export DB</button>
+                    <button @click="exportCSV()" class="btn btn-ghost"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+                    <label class="btn btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-sky-500"><i class="fa-solid fa-upload"></i> Import DB<input type="file" @change="importSQLite($event)" class="sr-only" accept=".db,.sqlite,.sqlite3" aria-label="Import SQLite database"></label>
+                    <button @click="clearAllData()" class="btn btn-red sm:ml-auto"><i class="fa-solid fa-trash-can"></i> Clear all data</button>
+                </div>
+            </section>
+
+            <p class="text-center text-[11px] text-slate-500" x-text="'Version ' + appVersion + ' · database schema v5 · works offline'"></p>
+        </div>
     </main>
 
     <!-- ======================= EDIT / ADD MODAL (commitment, expense row, event) ======================= -->
     <div x-show="modal.show" style="display:none" @click.self="closeModal()" @keydown.escape.window="modal.show && closeModal()" role="dialog" aria-modal="true" aria-label="Edit row"
          class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/80 backdrop-blur-sm sm:p-4">
         <template x-if="modal.show && modal.item">
-            <div class="bg-slate-900 border border-slate-700 w-full sm:max-w-xl rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl">
+            <div class="sheet bg-slate-900 border border-slate-700 w-full sm:max-w-xl rounded-t-3xl sm:rounded-3xl flex flex-col shadow-2xl">
                 <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
                     <h3 class="font-bold text-white text-sm" x-text="(modal.isNew ? 'Add ' : 'Edit ') + ({ c: 'commitment', l: 'expense row', e: 'event / task' })[modal.kind]"></h3>
                     <button @click="closeModal()" aria-label="Close" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
@@ -514,7 +639,7 @@
                     <template x-if="modal.kind === 'c'"><div class="contents">
                         <div class="col-span-2"><label class="lbl">Name *</label><input type="text" x-model="modal.item.name" :class="bad('c', modal.item, 'name')" class="inp"></div>
                         <div><label class="lbl">Region</label><select x-model="modal.item.region" class="inp"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === modal.item.region" x-text="r"></option></template></select></div>
-                        <div><label class="lbl">Category</label><input type="text" list="catList" x-model="modal.item.category" class="inp"></div>
+                        <div><label class="lbl">Category</label><div class="relative" x-data="combo('categoryOptions')" x-modelable="value" x-model="modal.item.category" x-bind="root"><input x-model="value" x-bind="field" aria-label="Category" placeholder="Category" class="inp !pr-8"><button x-bind="toggle" aria-label="Show category suggestions" class="absolute right-0 inset-y-0 px-2.5 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></div>
                         <div><label class="lbl">Amount *</label><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="modal.item.amount" :class="bad('c', modal.item, 'amount')" class="inp"></div>
                         <div><label class="lbl">Currency</label><select x-model="modal.item.currency" class="inp"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === modal.item.currency" x-text="r"></option></template></select></div>
                         <div><label class="lbl">Frequency</label><select x-model="modal.item.frequency" @change="$nextTick(() => onFreqChange(modal.item))" class="inp"><template x-for="r in frequencies" :key="r"><option :value="r" :selected="r === modal.item.frequency" x-text="r"></option></template></select></div>
@@ -526,20 +651,20 @@
                         </div>
                         <div><label class="lbl">Start date *</label><input type="date" x-model="modal.item.startDate" :class="bad('c', modal.item, 'startDate')" class="inp"><p class="text-[10px] text-slate-500 mt-1">Due dates before this are not tracked.</p></div>
                         <div><label class="lbl" x-text="modal.item.frequency === 'One-Time' ? 'Due date *' : 'End date (empty = ongoing)'"></label><input type="date" x-model="modal.item.endDate" :class="bad('c', modal.item, 'endDate')" class="inp"></div>
-                        <div class="col-span-2"><label class="lbl">Payment method</label><input type="text" list="methodList" x-model="modal.item.method" class="inp"></div>
+                        <div class="col-span-2"><label class="lbl">Payment method</label><div class="relative" x-data="combo('methodOptions')" x-modelable="value" x-model="modal.item.method" x-bind="root"><input x-model="value" x-bind="field" aria-label="Method" placeholder="Method" class="inp !pr-8"><button x-bind="toggle" aria-label="Show method suggestions" class="absolute right-0 inset-y-0 px-2.5 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></div>
                         <div class="col-span-2"><label class="lbl">Notes</label><textarea rows="2" x-model="modal.item.notes" class="inp"></textarea></div>
                     </div></template>
                     <!-- expense row -->
                     <template x-if="modal.kind === 'l'"><div class="contents">
                         <div><label class="lbl">Actual date *</label><input type="date" x-model="modal.item.actualDate" :class="bad('l', modal.item, 'actualDate')" class="inp"></div>
                         <div><label class="lbl">Commitment date</label><input type="date" x-model="modal.item.commitmentDate" :class="bad('l', modal.item, 'commitmentDate')" class="inp"></div>
-                        <div class="col-span-2"><label class="lbl">Linked commitment</label><select x-model.number="modal.item.commitmentId" @change="$nextTick(() => onLinkChange(modal.item))" :class="bad('l', modal.item, 'commitmentId')" class="inp"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(modal.item.commitmentId)" x-text="c.name"></option></template></select></div>
+                        <div class="col-span-2"><label class="lbl">Linked commitment</label><select x-model.number="modal.item.commitmentId" @change="$nextTick(() => onLinkChange(modal.item))" :class="bad('l', modal.item, 'commitmentId')" class="inp"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(modal.item.commitmentId)" x-text="c.name + (c.archived ? ' (archived)' : '')"></option></template></select></div>
                         <div class="col-span-2"><label class="lbl">Description *</label><input type="text" x-model="modal.item.item" :class="bad('l', modal.item, 'item')" class="inp"></div>
-                        <div><label class="lbl">Category</label><input type="text" list="catList" x-model="modal.item.category" class="inp"></div>
+                        <div><label class="lbl">Category</label><div class="relative" x-data="combo('categoryOptions')" x-modelable="value" x-model="modal.item.category" x-bind="root"><input x-model="value" x-bind="field" aria-label="Category" placeholder="Category" class="inp !pr-8"><button x-bind="toggle" aria-label="Show category suggestions" class="absolute right-0 inset-y-0 px-2.5 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></div>
                         <div><label class="lbl">Region</label><select x-model="modal.item.region" class="inp"><template x-for="r in regionOptions" :key="r"><option :value="r" :selected="r === modal.item.region" x-text="r"></option></template></select></div>
                         <div><label class="lbl">Amount *</label><input type="number" min="0" step="0.01" inputmode="decimal" x-model.number="modal.item.amount" :class="bad('l', modal.item, 'amount')" class="inp"></div>
                         <div><label class="lbl">Currency</label><select x-model="modal.item.currency" class="inp"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === modal.item.currency" x-text="r"></option></template></select></div>
-                        <div class="col-span-2"><label class="lbl">Method</label><input type="text" list="methodList" x-model="modal.item.method" class="inp"></div>
+                        <div class="col-span-2"><label class="lbl">Method</label><div class="relative" x-data="combo('methodOptions')" x-modelable="value" x-model="modal.item.method" x-bind="root"><input x-model="value" x-bind="field" aria-label="Method" placeholder="Method" class="inp !pr-8"><button x-bind="toggle" aria-label="Show method suggestions" class="absolute right-0 inset-y-0 px-2.5 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></div>
                         <div class="col-span-2"><label class="lbl">Notes</label><textarea rows="2" x-model="modal.item.notes" class="inp"></textarea></div>
                     </div></template>
                     <!-- event / task -->
@@ -556,7 +681,7 @@
                 <div class="px-5 py-4 border-t border-slate-800 flex flex-wrap gap-2 justify-end">
                     <button x-show="!modal.isNew" @click="if (deleteRow(modal.kind, modal.orig)) closeModal()" class="btn btn-red mr-auto"><i class="fa-solid fa-trash"></i> Delete</button>
                     <button @click="closeModal()" class="btn btn-ghost">Cancel</button>
-                    <button x-show="modal.kind === 'c'" @click="saveModal(true)" class="btn btn-em"><i class="fa-solid fa-check"></i> Save &amp; mark paid</button>
+                    <button x-show="modal.kind === 'c' && !Number(modal.item.archived)" @click="saveModal(true)" class="btn btn-em"><i class="fa-solid fa-check"></i> Save &amp; mark paid</button>
                     <button @click="saveModal(false)" class="btn btn-sky"><i class="fa-solid fa-floppy-disk"></i> <span x-text="modal.isNew ? 'Add' : 'Save changes'"></span></button>
                 </div>
             </div>
@@ -589,6 +714,10 @@
         <button @click="tab = 'events'" :class="tab === 'events' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
             <i class="fa-solid fa-calendar-check text-base mb-0.5"></i>
             <span>Events</span>
+        </button>
+        <button @click="tab = 'settings'" :class="tab === 'settings' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
+            <i class="fa-solid fa-gear text-base mb-0.5"></i>
+            <span>Settings</span>
         </button>
     </nav>
     </div>

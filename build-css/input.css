@@ -2,16 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Reusable UI parts - keeps index.html compact. Rebuild with: npm run build */
+/* Reusable UI parts - keeps index.html compact. Rebuild with: npm run build
+ * Colours are theme variables (see tailwind.config.js): the same classes render the dark and the light theme. */
 @layer components {
   .card  { @apply bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-2xl shadow-lg; }
   .panel { @apply bg-slate-900/40 border border-slate-800/80 rounded-2xl; }
   .inp   { @apply bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500 min-w-0 w-full; }
   .btn   { @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap; }
-  .btn-sky   { @apply bg-sky-600 hover:bg-sky-500 text-white; }
-  .btn-em    { @apply bg-emerald-600 hover:bg-emerald-500 text-white; }
+  .btn-sky   { @apply bg-sky-600 hover:bg-sky-500 text-onaccent; }
+  .btn-em    { @apply bg-emerald-600 hover:bg-emerald-500 text-onaccent; }
   .btn-ghost { @apply bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700; }
   .btn-red   { @apply bg-red-600/15 hover:bg-red-600/30 text-red-300 border border-red-500/30; }
+  .btn-amber { @apply bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40; }
   .th    { @apply px-2 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 whitespace-nowrap text-left; }
   .td    { @apply px-2 py-2 align-middle; }
   .lbl   { @apply block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1; }
@@ -20,4 +22,34 @@
   .kpi-l { @apply text-[11px] font-semibold text-slate-400 uppercase tracking-wider; }
   .kpi-v { @apply text-xl font-black mt-1 whitespace-pre-line break-words; }
   .rowno { @apply inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-lg bg-slate-800 text-[10px] font-bold text-slate-300 tabular-nums; }
+  .seg   { @apply inline-flex flex-wrap gap-1 p-1 rounded-xl bg-slate-950/60 border border-slate-800; }
+  .seg > button { @apply px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-400 transition; }
+  .seg > button[aria-pressed="true"], .seg > button[aria-checked="true"] { @apply bg-sky-600 text-onaccent; }
+
+  /* Native selects: one look on every platform. iOS/Android draw their own (often invisible) arrow on a styled
+     select, so the native appearance is replaced by a chevron that works on both themes. */
+  select.inp { @apply appearance-none pr-7 bg-no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%2394a3b8'%3E%3Cpath d='M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4z'/%3E%3C/svg%3E");
+    background-position: right 0.5rem center; background-size: 0.9rem; }
+
+  /* Combobox (free text + suggestion list). Replaces <datalist>, which iOS never opens on tap and Android filters to the current text. */
+  .combo-list { @apply absolute left-0 right-0 top-full mt-1 z-30 max-h-56 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 shadow-2xl py-1; }
+  .combo-opt  { @apply block w-full text-left px-3 py-2 text-xs text-slate-200 truncate; }
+  .combo-opt[aria-selected="true"] { @apply bg-slate-800 text-white; }
+
+  /* On/off switch */
+  .switch { @apply relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-slate-700 bg-slate-800 transition; }
+  .switch[aria-checked="true"] { @apply bg-emerald-600 border-emerald-600; }
+  .switch > span { @apply inline-block h-4 w-4 translate-x-1 rounded-full bg-slate-400 shadow transition; }
+  .switch[aria-checked="true"] > span { @apply translate-x-6 bg-onaccent; }
+
+  /* Mobile bottom sheet: dvh keeps the footer buttons above the browser toolbar (vh is the fallback) */
+  .sheet { max-height: 92vh; max-height: 92dvh; }
+}
+
+@layer base {
+  @media (pointer: coarse) { .inp { min-height: 2.5rem; } }        /* finger-sized fields on touch screens */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: rgb(var(--slate-900) / 0.6); }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--slate-700) / 0.8); border-radius: 9999px; }
 }

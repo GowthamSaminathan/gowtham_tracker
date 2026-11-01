@@ -1,4 +1,4 @@
-GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v4.1)
+GOWTHAM SCHEDULES & EXPENSE TRACKER  (offline build v5.0)
 ==========================================================
 
 HOW TO USE
@@ -7,12 +7,34 @@ HOW TO USE
   3. Keep the "assets" folder next to index.html.
 
 IMPORTING A DATABASE
-  "Import DB" accepts files exported from the v4 builds (gowtham_tracker_v4_YYYY-MM-DD_HH-MM-SS.db). Older files (v3 and before) are
-  rejected with a clear message and your current data stays untouched - open the old build, press "Export DB" there first
-  and use the v4.0 build once to upgrade it. There is no migration inside this version.
-  "Export DB" always writes schema v4.
+  "Import DB" accepts v5 files and v4 files (gowtham_tracker_v4_*.db). A v4 file is upgraded in place when it is opened
+  (two columns + a settings table are added; nothing is removed). v3 and older files are rejected with a clear message and
+  your current data stays untouched - open them once in the v4.0 build and export first. "Export DB" always writes schema v5.
+  The header always shows which file the data came from (or the last export name) and whether anything is unsaved.
 
-WHAT IS NEW IN v4.1
+WHAT IS NEW IN v5.0
+  * Pay Commitments - Pause / Resume: pausing leaves THIS month's due date out of the dashboard totals (Required,
+    Outstanding, Next N days, charts, due-date list) so you see exactly what you plan to pay this month. The pause ends by
+    itself when the month changes (an unpaid paused date then counts as overdue again). "Mark paid" on a paused row lifts it.
+  * Pay Commitments - Archive / Restore: archived commitments move to the "Archived" tab and are left out of every
+    calculation until restored. Their past payments stay in the Expense Log as actual spend.
+  * The pay button always shows the real state: "Mark paid · <date>" (green) when something is unpaid, "Mark pending"
+    (amber, undoes the payment) once this month is paid, "Resume" when paused. Fixes the mobile card that stayed green.
+  * Mobile dropdowns: Category / Method used <datalist>, which iOS never opens on tap and Android filters to the text already
+    typed. They are now a tappable combobox (full list on tap, filter as you type, keyboard arrows on desktop).
+    Native selects get a consistent chevron and finger-sized height on touch screens; the edit sheet uses dvh so its
+    buttons are never hidden behind the browser toolbar; hover colours no longer "stick" after a tap.
+  * Settings page: Auto-save switch (OFF by default, stored in the database). Off = typing in tables stays unsaved until
+    Save DB / "Save now"; actions (Mark paid, Pause, Archive, Save row, Delete, form Save) still save straight away but only
+    the row they touch. An amber bar offers Save now / Discard; closing the tab with unsaved changes asks first.
+  * Light and dark theme. Default follows the device (prefers-color-scheme) and switches with it; Settings can force one.
+  * Header shows the database file name (imported file / last export) and "Saved", "Saved · not exported" or "Unsaved".
+  * Dashboard: "Due dates in this window" now sits directly below "Still to pay in the next N days" (N = 7/14/30/60/90).
+    New windows: Next 6 months, Next 12 months, Rest of this year. "Where the money went" follows every window:
+    Auto = Spent for past windows, Still to pay (future money) for future windows, Spent + still to pay for the current one;
+    or pick a view, group by category or item, and open the matching rows in the Expense Log.
+
+WHAT WAS NEW IN v4.1
   * Currency fix: the "Actual expenses vs upcoming obligations" chart (labels, axis title, tooltips) now follows the currency you pick.
   * Old-database migration removed (smaller, safer code). Wrong / empty / unrelated files are refused on import.
   * Dashboard: previous / next arrows and a reset button for the time window; "Overdue now" and "Next 30 days" cards;
@@ -40,3 +62,4 @@ FILES
 
 REBUILDING THE CSS (optional, needs Node.js)
   cd build-css && npm install && npm run build
+  Colours are CSS variables defined in build-css/tailwind.config.js (dark values + the light-theme mapping).
