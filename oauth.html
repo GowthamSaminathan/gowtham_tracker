@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signing in…</title><meta name="robots" content="noindex"></head>
+<body style="font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0">
+<p id="m">Finishing sign-in…</p>
+<script>
+/* Redirect target of the OneDrive sign-in popup. It hands the one-time code to the tracker window and closes. */
+(function () {
+    var q = new URLSearchParams(location.search);
+    var msg = { type: 'tracker-oauth', state: q.get('state') || '', code: q.get('code') || '', error: q.get('error') || '', error_description: q.get('error_description') || '' };
+    history.replaceState(null, '', location.pathname);            // never leave the code in the address bar / history
+    if (window.opener) { window.opener.postMessage(msg, location.origin); window.close(); }
+    else document.getElementById('m').textContent = 'Sign-in finished. You can close this window and go back to the tracker.';
+})();
+</script></body></html>

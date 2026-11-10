@@ -82,3 +82,8 @@
 
 # &#x20; Invalid fields are outlined in red; invalid items cannot be marked as paid.
 
+
+
+# v5.4: private cloud backup (Google Drive / OneDrive) + installable Android/PWA
+
+See [CLOUD_BACKUP.md](CLOUD_BACKUP.md).

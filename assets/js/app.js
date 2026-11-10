@@ -102,7 +102,7 @@
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.3.0',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.4.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
@@ -116,6 +116,7 @@
                     const mq = window.matchMedia('(min-width: 1024px)'); this.isDesktop = mq.matches; mq.addEventListener('change', e => { this.isDesktop = e.matches; });
                     const md = window.matchMedia('(prefers-color-scheme: dark)'); this.sysDark = md.matches; md.addEventListener('change', e => { this.sysDark = e.matches; this.applyTheme(); });
                 }
+                this.cloudInit();
                 const lt = store.get(LS_THEME); if (C.SETTINGS.theme.ok(String(lt))) this.settings.theme = lt;     // until the DB is open
                 this.applyTheme();
                 document.addEventListener('visibilitychange', () => { if (!document.hidden) { this.clock = Date.now(); this.rev++; } });
@@ -193,6 +194,7 @@
                     if (mark) this.settings.exportPending = true;
                     if (!store.set(LS_KEY, toB64(db.export()))) { this.saveState = 'error'; this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error'); return false; }
                     this.saveState = 'saved';
+                    if (mark) this.cloudSchedule();
                     if (toast) this.showToast('Database saved!');
                     return true;
                 } catch (e) { console.error(e); this.saveState = 'error'; this.showToast('Save failed: ' + e.message, 'error'); return false; }
@@ -212,6 +214,7 @@
             writeStore() {
                 if (!store.set(LS_KEY, toB64(db.export()))) { this.saveState = 'error'; this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error'); return false; }
                 if (this.saveState !== 'dirty') this.saveState = 'saved';
+                this.cloudSchedule();
                 return true;
             },
             touch() { this.saveState = 'dirty'; clearTimeout(this._saveTimer); if (this.settings.autoSave) this._saveTimer = setTimeout(() => this.persist({ toast: false }), 800); },
@@ -918,26 +921,67 @@
                 if (!file) return;
                 try {
                     if (!confirm('Importing replaces ALL current data in this browser (your file on disk is not changed). Continue?')) return;
-                    const u8 = new Uint8Array(await file.arrayBuffer()), SQL = await getSQL();
+                    await this.importBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+                } finally { input.value = ''; }
+            },
+            // Shared by "Import DB" (a file) and "Restore" (a cloud backup). The caller has already asked for confirmation.
+            async importBytes(u8, name) {
+                try {
+                    const SQL = await getSQL();
                     const candidate = new SQL.Database(u8), prev = db;
                     try {
                         const names = C.listTables(candidate);                   // throws "file is not a database" for other files
                         if (!names.length) throw new Error('this database is empty');
                         if (!names.some(n => ['commitments', 'expense_logs', 'events', 'events_list', 'uae_payments', 'india_payments'].includes(n))) throw new Error('this file is not a tracker database');
                         const res = C.ensureSchema(candidate);                   // older / newer / damaged files are rejected here; v4 is upgraded
-                        const fname = String(file.name || 'imported.db').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255);
+                        const fname = String(name || 'imported.db').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255);
                         C.inTx(candidate, () => { C.writeSetting(candidate, 'dbName', fname); C.writeSetting(candidate, 'exportPending', '0'); });
                         db = candidate; clearTimeout(this._saveTimer);
                         this.loadDataFromDB(); this.persist({ toast: false, mark: false }); this.runLogQuery();
                         if (prev) prev.close();
                         this.showToast((res.upgradedFrom ? 'Imported and upgraded to v5: ' : 'Imported: ') + fname);
+                        return true;
                     } catch (err) {
                         db = prev; try { candidate.close(); } catch (_) { } try { if (db) this.loadDataFromDB(); } catch (_) { }
                         throw err;
                     }
-                } catch (err) { console.debug('Import rejected:', err.message); this.showToast('Import failed: ' + (err.message || 'invalid file'), 'error'); }
-                finally { input.value = ''; }
+                } catch (err) { console.debug('Import rejected:', err.message); this.showToast('Import failed: ' + (err.message || 'invalid file'), 'error'); return false; }
             },
+
+            /* ============================== private cloud backup (Google Drive / OneDrive) ============================== */
+            cloud: { providers: [], auto: true, busy: false, error: '', ids: { google: '', ms: '' }, redirect: '', restore: { open: false, provider: '', files: [], loading: false } },
+            cloudInit() {
+                const B = window.CloudBackup; if (!B) return;
+                const sync = () => { const st = B.status(); this.cloud.providers = st.providers; this.cloud.auto = st.auto; this.cloud.busy = st.busy; this.cloud.error = st.error; };
+                B.onChange(sync); { const c = B.config(); this.cloud.ids = { google: c.googleClientId, ms: c.msClientId }; } this.cloud.redirect = B.redirectUri(); sync();
+            },
+            cloudBytes() { if (!db) throw new Error('The database is not open yet.'); return db.export(); },   // only SAVED data is backed up, same as Export DB
+            cloudSchedule() { if (window.CloudBackup && db) window.CloudBackup.schedule(() => db.export()); },
+            cloudSaveId(p) { window.CloudBackup.setClientId(p, this.cloud.ids[p]); },
+            async cloudConnect(p) {
+                try { if (this.saveState === 'dirty') this.flush(); await window.CloudBackup.connect(p, () => this.cloudBytes()); this.showToast('Connected. Backup uploaded.'); }
+                catch (e) { this.showToast(e.message || 'Could not connect', 'error'); }
+            },
+            cloudDisconnect(p) { if (confirm('Disconnect from this account on this device? Existing backups in your drive are kept.')) window.CloudBackup.disconnect(p); },
+            async cloudBackupNow() {
+                try { if (this.saveState === 'dirty' && !this.settings.autoSave) { if (!confirm('You have unsaved changes. OK = save them first · Cancel = back up the last saved version')) { /* keep last saved */ } else this.persist({ toast: false }); } else this.flush();
+                    const r = await window.CloudBackup.backupNow(() => this.cloudBytes(), { interactive: true, force: true });
+                    const bad = Object.entries(r).filter(([, v]) => String(v).startsWith('error'));
+                    this.showToast(bad.length ? 'Backup problem: ' + bad.map(b => b[1]).join('; ') : 'Backup uploaded.', bad.length ? 'error' : 'success'); }
+                catch (e) { this.showToast(e.message || 'Backup failed', 'error'); }
+            },
+            async cloudRestoreOpen(p) {
+                const R = this.cloud.restore; R.open = true; R.provider = p; R.files = []; R.loading = true;
+                try { R.files = await window.CloudBackup.list(p); if (!R.files.length) this.showToast('No backups found in that drive yet.', 'info'); }
+                catch (e) { this.showToast(e.message || 'Could not list backups', 'error'); R.open = false; }
+                R.loading = false;
+            },
+            async cloudRestore(f) {
+                if (!confirm(`Restore "${f.name}"?\n\nThis replaces ALL current data in this browser with that backup.`)) return;
+                try { const u8 = await window.CloudBackup.download(this.cloud.restore.provider, f); if (await this.importBytes(u8, f.name)) this.cloud.restore.open = false; }
+                catch (e) { this.showToast(e.message || 'Restore failed', 'error'); }
+            },
+            fmtWhen(iso) { if (!iso) return 'never'; const d = new Date(iso); return isNaN(d) ? 'never' : d.toLocaleString(); },
             clearAllData() {
                 if (!confirm('Delete ALL commitments, expense logs and events? This cannot be undone.\n\nTip: use "Export DB" first if you want a backup.')) return;
                 this.commitments = []; this.expenseLogs = []; this.events = []; this.selectedRowIds = []; this.rev++; clearTimeout(this._saveTimer);
