@@ -102,7 +102,7 @@
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.5.0',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.6.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
@@ -195,7 +195,7 @@
                     if (mark) this.settings.exportPending = true;
                     if (!store.set(LS_KEY, toB64(db.export()))) { this.saveState = 'error'; this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error'); return false; }
                     this.saveState = 'saved';
-                    if (mark) this.cloudSchedule();
+                    if (mark) this.cloudSchedule(!!opts.now);
                     if (toast) this.showToast('Database saved!');
                     return true;
                 } catch (e) { console.error(e); this.saveState = 'error'; this.showToast('Save failed: ' + e.message, 'error'); return false; }
@@ -210,12 +210,12 @@
                 try { C.inTx(db, () => { ops.forEach(([sql, params]) => db.run(sql, params || [])); C.writeSetting(db, 'exportPending', '1'); }); }
                 catch (e) { console.error(e); this.saveState = 'error'; this.showToast('Save failed: ' + e.message, 'error'); return false; }
                 this.settings.exportPending = true;
-                return this.writeStore();
+                return this.writeStore(true);             // explicit actions (Save, Mark paid, ...) go to the cloud straight away
             },
-            writeStore() {
+            writeStore(now) {
                 if (!store.set(LS_KEY, toB64(db.export()))) { this.saveState = 'error'; this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error'); return false; }
                 if (this.saveState !== 'dirty') this.saveState = 'saved';
-                this.cloudSchedule();
+                this.cloudSchedule(!!now);
                 return true;
             },
             touch() { this.saveState = 'dirty'; clearTimeout(this._saveTimer); if (this.settings.autoSave) this._saveTimer = setTimeout(() => this.persist({ toast: false }), 800); },
@@ -258,9 +258,23 @@
                 this.showToast(on ? 'Auto-save is on: table edits are saved as you type.' : 'Auto-save is off: press Save to keep table edits.', 'info');
             },
             // Header: which file this data belongs to, and whether anything is unsaved / not exported yet
-            get dbLabel() { return this.settings.dbName || this.settings.lastExport || 'New database (not imported)'; },
+            get cloudOn() { return this.cloud.providers.filter(p => p.connected); },
+            get cloudName() { return this.cloudOn.map(p => p.label).join(' + '); },
+            // Header badge: is the cloud copy up to date, and is it automatic?
+            get cloudBadge() {
+                const on = this.cloudOn; if (!on.length) return null;
+                const mode = this.cloud.auto ? 'auto' : 'manual', bad = on.find(p => p.last.error), at = on.map(p => p.last.at).filter(Boolean).sort().pop();
+                const t = at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                if (this.cloud.busy) return { text: 'Backing up…', cls: 'text-sky-300', icon: 'fa-cloud-arrow-up', title: 'Uploading to ' + this.cloudName };
+                if (bad) return { text: 'Backup failed', cls: 'text-red-300', icon: 'fa-triangle-exclamation', title: bad.label + ': ' + bad.last.error + '\nTap to open the cloud backup settings.' };
+                if (this.cloud.needSignin) return { text: 'Sign in to sync', cls: 'text-amber-300', icon: 'fa-cloud', title: 'The cloud sign-in expired on this device.' };
+                if (this.cloud.pending || this.saveState === 'dirty') return { text: this.cloud.auto ? 'Backup pending' : 'Not backed up', cls: 'text-amber-300', icon: 'fa-cloud', title: this.cloud.auto ? 'Changes will upload in a few seconds.' : 'Auto backup is off. Use Save or Back up now.' };
+                return { text: 'Backed up' + (t ? ' ' + t : '') + ' · ' + mode, cls: 'text-emerald-400', icon: 'fa-cloud-arrow-up', title: this.cloudName + ': last backup ' + this.fmtWhen(at) + '\nAuto backup is ' + (this.cloud.auto ? 'on' : 'off') };
+            },
+            get dbLabel() { return this.cloudOn.length ? this.cloudName + ' · gowtham_tracker_latest.db' : (this.settings.dbName || this.settings.lastExport || 'New database (not imported)'); },
             get dbTitle() {
                 const s = this.settings;
+                if (this.cloudOn.length) return ['Using the ' + this.cloudName + ' copy: Apps folder > gowtham_tracker_latest.db', 'Also kept: one dated copy per day (last 14)', s.dbName && s.dbName !== 'gowtham_tracker_latest.db' ? 'Last restored from: ' + s.dbName : ''].filter(Boolean).join('\n');
                 return [s.dbName ? 'Imported from: ' + s.dbName : 'Not imported from a file', s.lastExport ? 'Last export: ' + s.lastExport : 'Never exported',
                     s.exportPending ? 'Saved data has changed since the last export / import' : 'Matches the last export / import'].join('\n');
             },
@@ -297,7 +311,7 @@
                 [['c', this.commitments], ['l', this.expenseLogs], ['e', this.events]].forEach(([k, arr]) => arr.forEach(o => { if (!o._draft) return; if (this.errList(k, o).length) bad++; else delete o._draft; }));
                 clearTimeout(this._saveTimer);
                 this.rev++;
-                if (!this.persist({ toast: false })) return;
+                if (!this.persist({ toast: false, now: true })) return;
                 this.refreshView(); this.refreshEvents(); this.runLogQuery();
                 this.showToast(bad ? `Saved. ${bad} draft row(s) are incomplete and were not saved yet.` : 'Database saved!', bad ? 'info' : 'success');
             },
@@ -950,10 +964,10 @@
             },
 
             /* ============================== private cloud backup (Google Drive / OneDrive) ============================== */
-            cloud: { promptLogin: false, needSignin: false, conflict: null, hint: '', providers: [], auto: true, busy: false, error: '', ids: { google: '', ms: '' }, redirect: '', restore: { open: false, provider: '', files: [], loading: false } },
+            cloud: { pending: false, promptLogin: false, needSignin: false, conflict: null, hint: '', providers: [], auto: true, busy: false, error: '', ids: { google: '', ms: '' }, redirect: '', restore: { open: false, provider: '', files: [], loading: false } },
             cloudInit() {
                 const B = window.CloudBackup; if (!B) return;
-                const sync = () => { const st = B.status(); this.cloud.providers = st.providers; this.cloud.auto = st.auto; this.cloud.busy = st.busy; this.cloud.error = st.error; };
+                const sync = () => { const st = B.status(); this.cloud.providers = st.providers; this.cloud.auto = st.auto; this.cloud.busy = st.busy; this.cloud.pending = st.pending; this.cloud.error = st.error; };
                 B.onChange(sync); { const c = B.config(); this.cloud.ids = { google: c.googleClientId, ms: c.msClientId }; } this.cloud.redirect = B.redirectUri(); sync();
             },
             /* On open (and when the app comes back to the front): sign in if needed, then keep this device and OneDrive in step. */
@@ -992,7 +1006,7 @@
             },
             cloudDismissPrompt() { this.cloud.promptLogin = false; store.set('tracker_cloud_prompt_off', '1'); },
             cloudBytes() { if (!db) throw new Error('The database is not open yet.'); return db.export(); },   // only SAVED data is backed up, same as Export DB
-            cloudSchedule() { if (window.CloudBackup && db) window.CloudBackup.schedule(() => db.export()); },
+            cloudSchedule(now) { if (window.CloudBackup && db) window.CloudBackup.schedule(() => db.export(), now ? 0 : 5000); },
             cloudSaveId(p) { window.CloudBackup.setClientId(p, this.cloud.ids[p]); },
             async cloudConnect(p) {
                 try { if (this.saveState === 'dirty') this.flush(); await window.CloudBackup.connect(p, () => this.cloudBytes()); this.showToast('Connected. Backup uploaded.'); }

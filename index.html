@@ -15,15 +15,15 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
     <title>Gowtham Schedules &amp; Expense Tracker v5 (Offline)</title>
     <!-- Everything is local: the app works with no internet connection -->
-    <link rel="stylesheet" href="assets/css/tailwind.css?v=5.5.0">
+    <link rel="stylesheet" href="assets/css/tailwind.css?v=5.6.0">
     <link rel="stylesheet" href="assets/css/fontawesome.min.css">
     <script src="assets/js/sql-wasm.js"></script>
     <script src="assets/js/sql-wasm-binary.js"></script>
     <script src="assets/js/chart.umd.js"></script>
-    <script src="backup-config.js?v=5.5.0"></script>
-    <script src="assets/js/backup.js?v=5.5.0"></script>
-    <script src="assets/js/core.js?v=5.5.0"></script>
-    <script src="assets/js/app.js?v=5.5.0"></script>
+    <script src="backup-config.js?v=5.6.0"></script>
+    <script src="assets/js/backup.js?v=5.6.0"></script>
+    <script src="assets/js/core.js?v=5.6.0"></script>
+    <script src="assets/js/app.js?v=5.6.0"></script>
     <!-- Version tags (?v=) above make browsers fetch fresh scripts after each release. Bump them together with appVersion.
          Safety net: if an old cached script still slipped through, reload once instead of showing a broken page. -->
     <script>(function () { if (window.Core && window.Core.moneyBreakdown && window.combo) return;
@@ -96,7 +96,9 @@
             <template x-if="saveState === 'dirty' && !settings.autoSave"><button @click="saveAll()" title="Changes are not saved yet - tap to save" class="shrink-0 badge bg-amber-500/15 text-amber-300 border border-amber-500/40"><i class="fa-solid fa-circle text-[6px] align-middle mr-1"></i>Unsaved · Save</button></template>
             <template x-if="saveState === 'dirty' && settings.autoSave"><span class="shrink-0 badge bg-amber-500/15 text-amber-300">Saving…</span></template>
             <template x-if="saveState === 'error'"><span class="shrink-0 badge bg-red-500/15 text-red-300" x-text="saveLabel"></span></template>
-            <template x-if="saveState === 'saved'"><span class="shrink-0" :class="settings.exportPending ? 'text-amber-300' : 'text-emerald-400'" :title="dbTitle"><i class="fa-solid fa-check mr-0.5"></i><span x-text="settings.exportPending ? 'Saved · not exported' : 'Saved'"></span></span></template>
+            <template x-if="saveState === 'saved'"><span class="shrink-0" :class="settings.exportPending && !cloudOn.length ? 'text-amber-300' : 'text-emerald-400'" :title="dbTitle"><i class="fa-solid fa-check mr-0.5"></i><span x-text="settings.exportPending && !cloudOn.length ? 'Saved · not exported' : 'Saved'"></span></span></template>
+            <button x-show="cloudBadge" @click="tab = 'settings'" :title="cloudBadge && cloudBadge.title" class="shrink-0 ml-auto sm:ml-0 flex items-center gap-1" :class="cloudBadge && cloudBadge.cls"><i class="fa-solid" :class="cloudBadge && cloudBadge.icon"></i><span x-text="cloudBadge && cloudBadge.text"></span></button>
+            <button x-show="!cloudOn.length && !loading" style="display:none" @click="tab = 'settings'" title="Not backed up to the cloud. Tap to set up OneDrive / Google Drive backup." class="shrink-0 ml-auto sm:ml-0 text-slate-500 hover:text-slate-300 flex items-center gap-1"><i class="fa-solid fa-cloud"></i>Cloud off</button>
         </div>
         <!-- unsaved changes bar (auto-save off, or new rows not saved yet) -->
     <div x-show="!loading && (cloud.promptLogin || cloud.needSignin || cloud.conflict || cloud.hint)" style="display:none" class="border-t border-sky-500/30 bg-sky-500/10" role="status">

@@ -1,6 +1,6 @@
 /* Service worker: makes the app installable and fully offline. Only same-origin app files are cached;
  * calls to Google / Microsoft (backups) are never intercepted and no data is ever stored here. */
-const VERSION = '5.5.0', CACHE = 'tracker-' + VERSION;
+const VERSION = '5.6.0', CACHE = 'tracker-' + VERSION;
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'backup-config.js?v=' + VERSION, 'oauth.html',
     'assets/css/tailwind.css?v=' + VERSION, 'assets/css/fontawesome.min.css', 'assets/webfonts/fa-solid-900.woff2',
     'assets/js/sql-wasm.js', 'assets/js/sql-wasm-binary.js', 'assets/js/chart.umd.js', 'assets/js/alpine.min.js',

@@ -136,20 +136,20 @@
     };
 
     /* ---------- backup logic ---------- */
-    let busy = false, timer = null, lastError = '';
+    let busy = false, timer = null, lastError = '', pending = false, seq = 0;
     const setLast = (p, patch) => { state.last = Object.assign({}, state.last || {}, { [p]: Object.assign({}, (state.last || {})[p] || {}, patch) }); persist(); };
 
     async function backupNow(getBytes, opts = {}) {
         const interactive = !!opts.interactive, force = !!opts.force;
         const names = enabledProviders(); if (!names.length) throw new Error('Connect Google Drive or OneDrive first.');
         if (busy) return { skipped: 'busy' };
-        busy = true; emit();
-        const bytes = getBytes(), hash = await sha(bytes), results = {};
+        busy = true; pending = false; clearTimeout(timer); emit();
+        const bytes = getBytes(), seqAtStart = seq, hash = await sha(bytes), results = {};
         try {
             for (const p of names) {
                 const P = providers[p];
                 try {
-                    if (!force && (state.lastHash || {})[p] === hash && (state.last || {})[p] && !(state.last[p].error)) { results[p] = 'unchanged'; state.dirty = false; persist(); continue; }
+                    if (!force && (state.lastHash || {})[p] === hash && (state.last || {})[p] && !(state.last[p].error)) { results[p] = 'unchanged'; if (seq === seqAtStart) state.dirty = false; persist(); continue; }
                     const t = await P.token(interactive);
                     let files = await P.list(t);
                     const latest = files.find(f => f.name === FILE_LATEST);
@@ -165,7 +165,7 @@
                         await P.put(t, snap, bytes, files.find(f => f.name === snap));
                     }
                     state.lastHash = Object.assign({}, state.lastHash, { [p]: hash });
-                    state.dirty = false; setLast(p, { at: new Date().toISOString(), error: '' }); results[p] = 'ok';
+                    if (seq === seqAtStart) state.dirty = false; setLast(p, { at: new Date().toISOString(), error: '' }); results[p] = 'ok';
                 } catch (e) {
                     if (e.status === 401 && state[p]) state[p].exp = 0;
                     setLast(p, { error: e.message || String(e) }); results[p] = 'error: ' + (e.message || e); lastError = e.message || String(e);
@@ -183,7 +183,7 @@
         setClientId(p, v) { state[p === 'google' ? 'googleClientId' : 'msClientId'] = String(v || '').trim(); persist(); emit(); },
         status() {
             const mk = p => ({ key: p, label: providers[p].label, hasId: !!clientId(p), connected: !!(state.on && state.on[p]), last: (state.last || {})[p] || {} });
-            return { providers: [mk('google'), mk('ms')], auto: state.auto !== false, busy, error: lastError };
+            return { providers: [mk('google'), mk('ms')], auto: state.auto !== false, busy, error: lastError, pending: pending || !!state.dirty };
         },
         async connect(p, getBytes) {
             const P = providers[p]; await P.token(true);
@@ -197,10 +197,12 @@
         setAuto(v) { state.auto = !!v; persist(); emit(); },
         backupNow,
         /* Called after every save. Waits for quiet, then uploads silently (no popups). */
-        schedule(getBytes) {
-            state.dirty = true; persist();          // this device has changes the cloud copy does not have
+        schedule(getBytes, delay = 5000) {
+            seq++; state.dirty = true; persist();          // this device has changes the cloud copy does not have
             if (state.auto === false || !enabledProviders().length) return;
-            clearTimeout(timer); timer = setTimeout(() => { backupNow(getBytes, { interactive: false }).catch(e => { lastError = e.message; emit(); }); }, 20000);
+            clearTimeout(timer); pending = true; emit();
+            const run = () => { timer = null; backupNow(getBytes, { interactive: false }).then(r => { if (r && r.skipped === 'busy') timer = setTimeout(run, 2000); }).catch(e => { lastError = e.message; emit(); }); };
+            timer = setTimeout(run, delay);
         },
         /* Compare this device with the cloud 'latest' copy. Never needs a popup (interactive:false).
          * none     : same as the cloud
