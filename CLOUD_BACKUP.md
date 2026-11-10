@@ -51,3 +51,12 @@ would not, because Google blocks sign-in inside embedded WebViews.
 
 Note: the installed app and the Chrome tab share storage on the same phone, but your PC and phone have separate data;
 use Backup/Restore to move data between them.
+
+## Sign in on open + sync (v5.5, OneDrive)
+
+- First visit on a browser: a banner offers **Sign in with OneDrive** (or "Not now"). The sign-in stays in that browser only.
+- Every time the app opens (or returns to the front), it compares this device with the OneDrive copy:
+  cloud newer and nothing changed here -> loads it automatically; only this device changed -> uploads;
+  **both changed -> asks** which to keep (a SQLite file can't be merged row by row).
+- It never replaces data while you have unsaved edits. If the OneDrive sign-in expired, a banner shows **Sign in again** (one tap).
+- Google Drive stays backup/restore only (no auto-load on open).

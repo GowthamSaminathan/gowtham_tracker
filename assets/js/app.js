@@ -102,7 +102,7 @@
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.4.0',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.5.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
@@ -164,6 +164,7 @@
                     this.runLogQuery();
                 } catch (e) { console.error(e); this.loadError = e.message || 'Failed to start the database.'; }
                 finally { this.loading = false; }
+                this.cloudStartup();
             },
             saveDashPrefs() { store.set(LS_DASH, JSON.stringify({ dash: this.dash, dueRange: this.dueRange, dueStatus: this.dueFilter, bdMode: this.bdMode, bdGroup: this.bdGroup })); },
             get draftCount() { return [this.commitments, this.expenseLogs, this.events].reduce((n, a) => n + a.filter(r => r._draft).length, 0); },
@@ -949,12 +950,47 @@
             },
 
             /* ============================== private cloud backup (Google Drive / OneDrive) ============================== */
-            cloud: { providers: [], auto: true, busy: false, error: '', ids: { google: '', ms: '' }, redirect: '', restore: { open: false, provider: '', files: [], loading: false } },
+            cloud: { promptLogin: false, needSignin: false, conflict: null, hint: '', providers: [], auto: true, busy: false, error: '', ids: { google: '', ms: '' }, redirect: '', restore: { open: false, provider: '', files: [], loading: false } },
             cloudInit() {
                 const B = window.CloudBackup; if (!B) return;
                 const sync = () => { const st = B.status(); this.cloud.providers = st.providers; this.cloud.auto = st.auto; this.cloud.busy = st.busy; this.cloud.error = st.error; };
                 B.onChange(sync); { const c = B.config(); this.cloud.ids = { google: c.googleClientId, ms: c.msClientId }; } this.cloud.redirect = B.redirectUri(); sync();
             },
+            /* On open (and when the app comes back to the front): sign in if needed, then keep this device and OneDrive in step. */
+            async cloudStartup() {
+                const B = window.CloudBackup; if (!B || !db) return;
+                const c = this.cloud; c.hint = '';
+                if (!B.isConnected('ms') && !B.isConnected('google')) { c.promptLogin = store.get('tracker_cloud_prompt_off') !== '1'; return; }
+                c.promptLogin = false;
+                document.addEventListener('visibilitychange', () => { if (!document.hidden && !this._syncBusy) this.cloudSync(); }, { once: false });
+                await this.cloudSync();
+            },
+            async cloudSync(interactive) {
+                const B = window.CloudBackup; if (!B || !B.isConnected('ms') || this._syncBusy || !db) return;
+                this._syncBusy = true; const c = this.cloud;
+                try {
+                    const r = await B.checkSync('ms', !!interactive);
+                    c.needSignin = r.action === 'signin'; c.conflict = null;
+                    const editing = this.draftCount || this.saveState === 'dirty';
+                    if (r.action === 'load') {
+                        if (editing) c.conflict = r.file;                                   // never replace data the user is typing
+                        else if (await this.importBytes(await B.download('ms', r.file), r.file.name)) { B.markSynced('ms', r.file); this.showToast('Loaded the newer copy from OneDrive.', 'info'); }
+                    } else if (r.action === 'conflict') c.conflict = r.file;
+                    else if (r.action === 'upload' || r.action === 'empty') { if (!editing) await B.backupNow(() => this.cloudBytes(), { interactive: false, force: true }); }
+                } catch (e) { c.hint = 'OneDrive check failed: ' + (e.message || e); }
+                finally { this._syncBusy = false; }
+            },
+            async cloudLoginMs() {                       // from the sign-in banner (a tap, so the popup is allowed)
+                await this.cloudConnect('ms'); this.cloud.promptLogin = false; this.cloud.needSignin = false;
+                await this.cloudSync(true);
+            },
+            async cloudResolve(useCloud) {
+                const f = this.cloud.conflict, B = window.CloudBackup; if (!f) return;
+                if (useCloud) { if (!confirm('Replace the data on this device with the OneDrive copy? Changes made here since the last sync will be lost.')) return;
+                    if (await this.importBytes(await B.download('ms', f), f.name)) { B.markSynced('ms', f); this.cloud.conflict = null; } }
+                else { this.flush(); await B.backupNow(() => this.cloudBytes(), { interactive: true, force: true }); this.cloud.conflict = null; this.showToast('OneDrive now has this device\'s data.'); }
+            },
+            cloudDismissPrompt() { this.cloud.promptLogin = false; store.set('tracker_cloud_prompt_off', '1'); },
             cloudBytes() { if (!db) throw new Error('The database is not open yet.'); return db.export(); },   // only SAVED data is backed up, same as Export DB
             cloudSchedule() { if (window.CloudBackup && db) window.CloudBackup.schedule(() => db.export()); },
             cloudSaveId(p) { window.CloudBackup.setClientId(p, this.cloud.ids[p]); },
@@ -978,7 +1014,7 @@
             },
             async cloudRestore(f) {
                 if (!confirm(`Restore "${f.name}"?\n\nThis replaces ALL current data in this browser with that backup.`)) return;
-                try { const u8 = await window.CloudBackup.download(this.cloud.restore.provider, f); if (await this.importBytes(u8, f.name)) this.cloud.restore.open = false; }
+                try { const u8 = await window.CloudBackup.download(this.cloud.restore.provider, f); if (await this.importBytes(u8, f.name)) { this.cloud.restore.open = false; if (f.name === 'gowtham_tracker_latest.db') window.CloudBackup.markSynced(this.cloud.restore.provider, f); } }
                 catch (e) { this.showToast(e.message || 'Restore failed', 'error'); }
             },
             fmtWhen(iso) { if (!iso) return 'never'; const d = new Date(iso); return isNaN(d) ? 'never' : d.toLocaleString(); },

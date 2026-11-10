@@ -15,15 +15,15 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
     <title>Gowtham Schedules &amp; Expense Tracker v5 (Offline)</title>
     <!-- Everything is local: the app works with no internet connection -->
-    <link rel="stylesheet" href="assets/css/tailwind.css?v=5.4.0">
+    <link rel="stylesheet" href="assets/css/tailwind.css?v=5.5.0">
     <link rel="stylesheet" href="assets/css/fontawesome.min.css">
     <script src="assets/js/sql-wasm.js"></script>
     <script src="assets/js/sql-wasm-binary.js"></script>
     <script src="assets/js/chart.umd.js"></script>
-    <script src="backup-config.js?v=5.4.0"></script>
-    <script src="assets/js/backup.js?v=5.4.0"></script>
-    <script src="assets/js/core.js?v=5.4.0"></script>
-    <script src="assets/js/app.js?v=5.4.0"></script>
+    <script src="backup-config.js?v=5.5.0"></script>
+    <script src="assets/js/backup.js?v=5.5.0"></script>
+    <script src="assets/js/core.js?v=5.5.0"></script>
+    <script src="assets/js/app.js?v=5.5.0"></script>
     <!-- Version tags (?v=) above make browsers fetch fresh scripts after each release. Bump them together with appVersion.
          Safety net: if an old cached script still slipped through, reload once instead of showing a broken page. -->
     <script>(function () { if (window.Core && window.Core.moneyBreakdown && window.combo) return;
@@ -99,6 +99,19 @@
             <template x-if="saveState === 'saved'"><span class="shrink-0" :class="settings.exportPending ? 'text-amber-300' : 'text-emerald-400'" :title="dbTitle"><i class="fa-solid fa-check mr-0.5"></i><span x-text="settings.exportPending ? 'Saved · not exported' : 'Saved'"></span></span></template>
         </div>
         <!-- unsaved changes bar (auto-save off, or new rows not saved yet) -->
+    <div x-show="!loading && (cloud.promptLogin || cloud.needSignin || cloud.conflict || cloud.hint)" style="display:none" class="border-t border-sky-500/30 bg-sky-500/10" role="status">
+        <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex flex-wrap items-center gap-2 text-xs text-sky-200">
+            <span class="min-w-0" x-show="cloud.promptLogin"><i class="fa-solid fa-cloud mr-1"></i>Sign in with OneDrive to back up and sync this tracker to your private OneDrive app folder. The sign-in stays on this browser only.</span>
+            <button x-show="cloud.promptLogin" @click="cloudLoginMs()" class="btn btn-em"><i class="fa-solid fa-link"></i> Sign in with OneDrive</button>
+            <button x-show="cloud.promptLogin" @click="cloudDismissPrompt()" class="btn btn-ghost">Not now</button>
+            <span class="min-w-0" x-show="cloud.needSignin"><i class="fa-solid fa-cloud mr-1"></i>OneDrive sign-in expired on this device.</span>
+            <button x-show="cloud.needSignin" @click="cloudSync(true)" class="btn btn-em"><i class="fa-solid fa-rotate"></i> Sign in again</button>
+            <span class="min-w-0" x-show="cloud.conflict"><i class="fa-solid fa-triangle-exclamation mr-1"></i>OneDrive and this device both changed. Which copy do you want to keep?</span>
+            <button x-show="cloud.conflict" @click="cloudResolve(true)" class="btn btn-ghost">Use OneDrive copy</button>
+            <button x-show="cloud.conflict" @click="cloudResolve(false)" class="btn btn-em">Keep this device</button>
+            <span class="min-w-0 text-amber-300" x-show="cloud.hint" x-text="cloud.hint"></span>
+        </div>
+    </div>
         <div x-show="!loading && unsavedCount && !(settings.autoSave && !draftCount)" style="display:none" class="border-t border-amber-500/30 bg-amber-500/10" role="status">
             <div class="max-w-7xl mx-auto px-3 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span class="text-amber-300 min-w-0"><i class="fa-solid fa-circle-exclamation mr-1"></i><span x-text="unsavedText"></span></span>

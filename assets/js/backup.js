@@ -129,7 +129,7 @@
                 const j = await (await call(GRAPH + '/me/drive/special/approot/children?$select=id,name,size,lastModifiedDateTime&$top=200', t)).json();
                 return (j.value || []).filter(f => f.name.endsWith('.db')).map(f => ({ id: f.id, name: f.name, size: f.size || 0, modified: f.lastModifiedDateTime })).sort((a, b) => b.modified.localeCompare(a.modified));
             },
-            async put(t, name, bytes) { return call(GRAPH + '/me/drive/special/approot:/' + encodeURIComponent(name) + ':/content', t, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }); },
+            async put(t, name, bytes) { const r = await call(GRAPH + '/me/drive/special/approot:/' + encodeURIComponent(name) + ':/content', t, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }); const j = await r.json().catch(() => ({})); return { modified: j.lastModifiedDateTime || '' }; },
             async get(t, f) { return new Uint8Array(await (await call(GRAPH + '/me/drive/items/' + f.id + '/content', t)).arrayBuffer()); },
             async del(t, f) { return call(GRAPH + '/me/drive/items/' + f.id, t, { method: 'DELETE' }); }
         }
@@ -149,11 +149,12 @@
             for (const p of names) {
                 const P = providers[p];
                 try {
-                    if (!force && (state.lastHash || {})[p] === hash && (state.last || {})[p] && !(state.last[p].error)) { results[p] = 'unchanged'; continue; }
+                    if (!force && (state.lastHash || {})[p] === hash && (state.last || {})[p] && !(state.last[p].error)) { results[p] = 'unchanged'; state.dirty = false; persist(); continue; }
                     const t = await P.token(interactive);
                     let files = await P.list(t);
                     const latest = files.find(f => f.name === FILE_LATEST);
-                    await P.put(t, FILE_LATEST, bytes, latest);
+                    const up = await P.put(t, FILE_LATEST, bytes, latest);
+                    if (up && up.modified) { state.cloudMod = Object.assign({}, state.cloudMod, { [p]: up.modified }); }
                     const snap = SNAP_PREFIX + todayStr() + '.db';          // one dated copy per day, so a bad day can be rolled back
                     if (!files.some(f => f.name === snap)) {
                         await P.put(t, snap, bytes, null);
@@ -164,7 +165,7 @@
                         await P.put(t, snap, bytes, files.find(f => f.name === snap));
                     }
                     state.lastHash = Object.assign({}, state.lastHash, { [p]: hash });
-                    setLast(p, { at: new Date().toISOString(), error: '' }); results[p] = 'ok';
+                    state.dirty = false; setLast(p, { at: new Date().toISOString(), error: '' }); results[p] = 'ok';
                 } catch (e) {
                     if (e.status === 401 && state[p]) state[p].exp = 0;
                     setLast(p, { error: e.message || String(e) }); results[p] = 'error: ' + (e.message || e); lastError = e.message || String(e);
@@ -197,9 +198,31 @@
         backupNow,
         /* Called after every save. Waits for quiet, then uploads silently (no popups). */
         schedule(getBytes) {
+            state.dirty = true; persist();          // this device has changes the cloud copy does not have
             if (state.auto === false || !enabledProviders().length) return;
             clearTimeout(timer); timer = setTimeout(() => { backupNow(getBytes, { interactive: false }).catch(e => { lastError = e.message; emit(); }); }, 20000);
         },
+        /* Compare this device with the cloud 'latest' copy. Never needs a popup (interactive:false).
+         * none     : same as the cloud
+         * load     : cloud changed, this device did not        -> safe to load the cloud copy
+         * upload   : this device changed, cloud did not        -> back up
+         * conflict : both changed since the last sync          -> the user must choose
+         * empty    : nothing in the cloud yet                  -> back up
+         * signin   : no usable sign-in (needs one tap)         */
+        async checkSync(p, interactive) {
+            if (!(state.on && state.on[p])) return { action: 'off' };
+            const P = providers[p];
+            let t; try { t = await P.token(!!interactive); } catch (e) { return { action: 'signin', error: e.message }; }
+            const files = await P.list(t), file = files.find(f => f.name === FILE_LATEST);
+            if (!file) return { action: 'empty' };
+            const cloudChanged = file.modified !== ((state.cloudMod || {})[p] || ''), localChanged = !!state.dirty;
+            if (!cloudChanged && !localChanged) return { action: 'none', file };
+            if (cloudChanged && !localChanged) return { action: 'load', file };
+            if (!cloudChanged && localChanged) return { action: 'upload', file };
+            return { action: 'conflict', file };
+        },
+        markSynced(p, file) { state.cloudMod = Object.assign({}, state.cloudMod, { [p]: file.modified }); state.dirty = false; persist(); },
+        isConnected(p) { return !!(state.on && state.on[p]); },
         async list(p) { const P = providers[p]; return P.list(await P.token(false).catch(() => P.token(true))); },
         async download(p, file) { const P = providers[p]; return P.get(await P.token(false).catch(() => P.token(true)), file); }
     };
