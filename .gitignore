@@ -1,2 +1,8 @@
 build-css/node_modules/
 build-css/package-lock.json
+
+# never commit personal data exports
+*.db
+*.sqlite
+*.sqlite3
+gowtham_export_*.csv

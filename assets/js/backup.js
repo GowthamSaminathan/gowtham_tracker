@@ -12,7 +12,7 @@
     const LS = 'tracker_cloud_v1';
     const FILE_LATEST = 'gowtham_tracker_latest.db';
     const SNAP_PREFIX = 'gowtham_tracker_', SNAP_RE = /^gowtham_tracker_(\d{4}-\d{2}-\d{2})\.db$/;
-    const KEEP_DAILY = 14;
+    const KEEP_DAILY = 14, KEPT_PREFIX = 'gowtham_tracker_kept_';
     const G_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
     const MS_SCOPE = 'Files.ReadWrite.AppFolder offline_access';
     const MS_AUTH = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';   // personal Microsoft accounts (OneDrive personal)
@@ -136,7 +136,7 @@
     };
 
     /* ---------- backup logic ---------- */
-    let busy = false, timer = null, lastError = '', pending = false, seq = 0;
+    let busy = false, timer = null, lastError = '', pending = false, seq = 0, conflictFile = null;
     const setLast = (p, patch) => { state.last = Object.assign({}, state.last || {}, { [p]: Object.assign({}, (state.last || {})[p] || {}, patch) }); persist(); };
 
     async function backupNow(getBytes, opts = {}) {
@@ -153,7 +153,11 @@
                     const t = await P.token(interactive);
                     let files = await P.list(t);
                     const latest = files.find(f => f.name === FILE_LATEST);
+                    // Never overwrite a cloud copy this device has not seen (another device saved it, or this device has
+                    // never synced). The app then asks which copy to keep. Only OneDrive reports the time needed for this.
+                    if (p === 'ms' && !force && latest && latest.modified !== ((state.cloudMod || {})[p] || '')) { conflictFile = latest; results[p] = 'conflict'; continue; }
                     const up = await P.put(t, FILE_LATEST, bytes, latest);
+                    if (p === 'ms') conflictFile = null;
                     if (up && up.modified) { state.cloudMod = Object.assign({}, state.cloudMod, { [p]: up.modified }); }
                     const snap = SNAP_PREFIX + todayStr() + '.db';          // one dated copy per day, so a bad day can be rolled back
                     if (!files.some(f => f.name === snap)) {
@@ -165,7 +169,7 @@
                         await P.put(t, snap, bytes, files.find(f => f.name === snap));
                     }
                     state.lastHash = Object.assign({}, state.lastHash, { [p]: hash });
-                    if (seq === seqAtStart) state.dirty = false; setLast(p, { at: new Date().toISOString(), error: '' }); results[p] = 'ok';
+                    if (seq === seqAtStart) state.dirty = false; setLast(p, { at: new Date().toISOString(), error: '' }); results[p] = 'ok'; lastError = '';
                 } catch (e) {
                     if (e.status === 401 && state[p]) state[p].exp = 0;
                     setLast(p, { error: e.message || String(e) }); results[p] = 'error: ' + (e.message || e); lastError = e.message || String(e);
@@ -183,15 +187,26 @@
         setClientId(p, v) { state[p === 'google' ? 'googleClientId' : 'msClientId'] = String(v || '').trim(); persist(); emit(); },
         status() {
             const mk = p => ({ key: p, label: providers[p].label, hasId: !!clientId(p), connected: !!(state.on && state.on[p]), last: (state.last || {})[p] || {} });
-            return { providers: [mk('google'), mk('ms')], auto: state.auto !== false, busy, error: lastError, pending: pending || !!state.dirty };
+            return { providers: [mk('google'), mk('ms')], auto: state.auto !== false, busy, error: lastError, pending: pending || !!state.dirty, conflict: conflictFile };
         },
-        async connect(p, getBytes) {
+        // Signs in only. Nothing is uploaded here: the app first looks at what the drive already holds, so a new or
+        // empty device can never replace an existing backup just by connecting.
+        async connect(p) {
             const P = providers[p]; await P.token(true);
             state.on = Object.assign({}, state.on, { [p]: true }); persist(); lastError = ''; emit();
-            if (getBytes) await backupNow(getBytes, { interactive: true, force: true });
+        },
+        hasSynced(p) { return !!((state.cloudMod || {})[p]); },
+        // Safety copy written before one side replaces the other (shown in Restore…; the newest 5 are kept).
+        async keepCopy(p, bytes, tag) {
+            const P = providers[p], t = await P.token(false).catch(() => P.token(true)), d = new Date(), z = n => String(n).padStart(2, '0');
+            const name = `${KEPT_PREFIX}${tag}_${todayStr()}_${z(d.getHours())}-${z(d.getMinutes())}-${z(d.getSeconds())}.db`;
+            await P.put(t, name, bytes, null);
+            const old = (await P.list(t)).filter(f => f.name.startsWith(KEPT_PREFIX)).sort((a, b) => String(b.modified).localeCompare(String(a.modified))).slice(5);
+            for (const f of old) { try { await P.del(t, f); } catch (e) { } }
+            return name;
         },
         disconnect(p) {
-            state.on = Object.assign({}, state.on, { [p]: false }); delete state[p]; if (state.lastHash) delete state.lastHash[p]; if (state.last) delete state.last[p];
+            state.on = Object.assign({}, state.on, { [p]: false }); delete state[p]; if (state.lastHash) delete state.lastHash[p]; if (state.last) delete state.last[p]; if (state.cloudMod) delete state.cloudMod[p]; if (p === 'ms') conflictFile = null;
             persist(); emit();
         },
         setAuto(v) { state.auto = !!v; persist(); emit(); },
@@ -223,7 +238,7 @@
             if (!cloudChanged && localChanged) return { action: 'upload', file };
             return { action: 'conflict', file };
         },
-        markSynced(p, file) { state.cloudMod = Object.assign({}, state.cloudMod, { [p]: file.modified }); state.dirty = false; persist(); },
+        markSynced(p, file) { state.cloudMod = Object.assign({}, state.cloudMod, { [p]: file.modified }); state.dirty = false; if (p === 'ms') conflictFile = null; persist(); emit(); },
         isConnected(p) { return !!(state.on && state.on[p]); },
         async list(p) { const P = providers[p]; return P.list(await P.token(false).catch(() => P.token(true))); },
         async download(p, file) { const P = providers[p]; return P.get(await P.token(false).catch(() => P.token(true)), file); }

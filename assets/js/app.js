@@ -2,6 +2,8 @@
 (function () {
     'use strict';
     const C = window.Core;
+    const LS_PRIV = 'tracker_privacy', LS_DEMO_OFF = 'tracker_demo_off', SS_DEMO = 'tracker_demo', MASK = '••••';
+    let PRIV = false;                               // mirrors the component's privacy switch for Chart.js callbacks
     const LS_KEY = 'sqlite_db_b64', LS_REJECTED = 'sqlite_db_rejected_backup', LS_DASH = 'tracker_dash_v1', LS_THEME = 'tracker_theme';   // LS_THEME mirrors the DB setting so the theme is right before the DB loads
     const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`; };   // local time, file-name safe
     const COLOR = { obl: '#3987e5', act: '#d95926', prev: '#94a3b8' };     // validated pair: blue = obligations, orange = actual spend (same meaning everywhere)
@@ -29,10 +31,11 @@
     const opRow = (t, r) => [C.UPSERT(t), C.dbValues(t, r)];
     const opDel = (t, id) => [`DELETE FROM ${t} WHERE id = ?`, [Number(id)]];
     const opFlags = c => ['UPDATE commitments SET pausedMonth = ?, archived = ? WHERE id = ?', [C.isMonthKey(c.pausedMonth) ? c.pausedMonth : null, C.isArchived(c) ? 1 : 0, Number(c.id)]];
+    const SKIP_INS = 'INSERT OR REPLACE INTO skips (commitmentId, commitmentDate) VALUES (?, ?)';
     const BLANK_LF = () => ({ q: '', actualFrom: '', actualTo: '', commitFrom: '', commitTo: '', category: 'All', currency: 'All', method: 'All', link: 'any', minAmt: '', maxAmt: '' });
     // Ranges of the dashboard "Due dates & still to pay" card: the dashboard window, or a period starting today.
     const DUE_RANGES = [['window', 'This dashboard window'], ['month', 'Today → end of this month'], ['d7', 'Next 7 days'], ['d14', 'Next 14 days'], ['d30', 'Next 30 days'], ['d60', 'Next 60 days'], ['d90', 'Next 90 days']];
-    const DUE_STATUS = ['All', 'Unpaid', 'Overdue', 'Pending', 'Paid', 'Paused'];
+    const DUE_STATUS = ['All', 'Unpaid', 'Overdue', 'Pending', 'Paid', 'Paused', 'Skipped'];
     const BLANK_DUEF = () => ({ q: '', cat: 'All', cid: 'All', min: '', max: '', overdue: false, curs: [] });      // curs: [] = every currency
     const download = (blob, name) => {
         const url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -102,13 +105,23 @@
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.6.0',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.7.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
             loading: true, loadError: '', saveState: 'saved', isDesktop: true,
             _saveTimer: null, _toastTimer: null, _logTimer: null,
-            money: fmtMoney, fmtDate: C.fmtDate, fmtAmt, parseAmt,
+            fmtDate: C.fmtDate, fmtAmt, parseAmt,
+            privacy: false, demo: false, skips: [], dueOpen: '',
+            /* Privacy mask: amounts become "AED ••••" and payment names keep only their first letters ("Re••••").
+             * It is a display setting of this browser only - the data, exports and backups are never changed. */
+            money(v, c) { return this.privacy ? (c ? c + ' ' : '') + MASK : fmtMoney(v, c); },
+            nm(v) { const t = String(v ?? ''); if (!this.privacy || !t) return t; const keep = t.length > 4 ? 2 : 1; return t.slice(0, keep) + '•'.repeat(Math.min(Math.max(t.length - keep, 3), 6)); },
+            togglePrivacy() {
+                this.privacy = !this.privacy; PRIV = this.privacy; store.set(LS_PRIV, this.privacy ? '1' : '0');
+                if (this.tab === 'dashboard') { this.destroyCharts(); this.$nextTick(() => this.drawCharts()); }
+                this.showToast(this.privacy ? 'Amounts and payment names are masked on this device.' : 'Amounts and names are visible again.', 'info');
+            },
 
             /* ============================== boot ============================== */
             async initDB() {
@@ -116,11 +129,13 @@
                     const mq = window.matchMedia('(min-width: 1024px)'); this.isDesktop = mq.matches; mq.addEventListener('change', e => { this.isDesktop = e.matches; });
                     const md = window.matchMedia('(prefers-color-scheme: dark)'); this.sysDark = md.matches; md.addEventListener('change', e => { this.sysDark = e.matches; this.applyTheme(); });
                 }
+                this.privacy = PRIV = store.get(LS_PRIV) === '1';
                 this.cloudInit();
                 const lt = store.get(LS_THEME); if (C.SETTINGS.theme.ok(String(lt))) this.settings.theme = lt;     // until the DB is open
                 this.applyTheme();
                 document.addEventListener('visibilitychange', () => { if (!document.hidden) { this.clock = Date.now(); this.rev++; } });
                 window.addEventListener('beforeunload', e => {
+                    if (this.demo) return;
                     if (this.saveState === 'dirty' && db && this.settings.autoSave) this.persist({ toast: false });
                     if (this.draftCount || (this.saveState === 'dirty' && !this.settings.autoSave)) { e.preventDefault(); e.returnValue = ''; }   // unsaved rows / edits would be lost
                 });
@@ -147,7 +162,8 @@
                 this.$watch('dueRange', () => { this.dueSel = []; }); this.$watch('dash', () => { this.dueSel = []; });
                 try {
                     const SQL = await getSQL();
-                    const raw = store.get(LS_KEY);
+                    this.demo = this.wantDemo();
+                    const raw = this.demo ? null : store.get(LS_KEY);
                     let opened = false;
                     if (raw) {
                         try { db = new SQL.Database(fromB64(raw)); if (C.ensureSchema(db).upgradedFrom) this.showToast('Your data was upgraded to the v5 format (pause / archive / settings). Nothing was removed.', 'info'); opened = true; }
@@ -159,6 +175,7 @@
                         }
                     }
                     if (!opened) { db = new SQL.Database(); C.ensureSchema(db); }   // first run: completely empty
+                    if (this.demo) this.seedDemo();
                     this.loadDataFromDB();
                     this.persist({ toast: false, mark: false });          // normalises the stored copy; not a user change
                     this.runLogQuery();
@@ -166,6 +183,37 @@
                 finally { this.loading = false; }
                 this.cloudStartup();
             },
+            /* ============================== demo (sample data, in memory only) ==============================
+             * Shown on the very first visit of a browser, with ?demo=1, or from Settings. The demo database lives in memory:
+             * it is never written to this browser's storage and never backed up, so real data cannot be mixed with it. */
+            wantDemo() {
+                if (!window.TrackerDemo) return false;
+                let q = null, ss = null;
+                try { q = new URLSearchParams(location.search).get('demo'); } catch (e) { }
+                try { ss = sessionStorage.getItem(SS_DEMO); } catch (e) { }
+                if (q === '1') return true;
+                if (q === '0' || ss === '0') return false;
+                const B = window.CloudBackup, connected = !!B && (B.isConnected('ms') || B.isConnected('google'));
+                return store.get(LS_KEY) === null && store.get(LS_REJECTED) === null && store.get(LS_DEMO_OFF) !== '1' && !connected;      // first visit only
+            },
+            seedDemo() {
+                const d = window.TrackerDemo.build(C, C.todayISO());
+                C.inTx(db, () => {
+                    d.commitments.forEach(r => db.run(C.INS('commitments'), C.dbValues('commitments', r)));
+                    d.logs.forEach(r => db.run(C.INS('expense_logs'), C.dbValues('expense_logs', r)));
+                    d.events.forEach(r => db.run(C.INS('events'), C.dbValues('events', r)));
+                    d.skips.forEach(k => db.run(SKIP_INS, [k.commitmentId, k.commitmentDate]));
+                });
+            },
+            startDemo() {
+                if (this.unsavedCount) { this.showToast('Save or discard your changes first, then open the demo.', 'info'); return; }
+                location.href = location.pathname + '?demo=1';          // your own data stays untouched in this browser
+            },
+            exitDemo() {
+                store.set(LS_DEMO_OFF, '1'); try { sessionStorage.setItem(SS_DEMO, '0'); } catch (e) { }
+                location.href = location.pathname;
+            },
+            get demoLink() { return location.origin + location.pathname + '?demo=1'; },
             saveDashPrefs() { store.set(LS_DASH, JSON.stringify({ dash: this.dash, dueRange: this.dueRange, dueStatus: this.dueFilter, bdMode: this.bdMode, bdGroup: this.bdGroup })); },
             get draftCount() { return [this.commitments, this.expenseLogs, this.events].reduce((n, a) => n + a.filter(r => r._draft).length, 0); },
             loadDataFromDB() {
@@ -173,7 +221,8 @@
                 this.commitments = R('commitments').map(r => ({ ...r, amount: C.toMoney(r.amount), dueDay: C.toInt(r.dueDay) ?? '', dueMonth: C.toInt(r.dueMonth) ?? '', pausedMonth: C.isMonthKey(r.pausedMonth) ? r.pausedMonth : '', archived: r.archived ? 1 : 0 }));
                 this.expenseLogs = R('expense_logs').map(r => ({ ...r, amount: C.toMoney(r.amount), commitmentId: C.toInt(r.commitmentId) ?? '' }));
                 this.events = R('events').map(r => ({ ...r, budget: C.toMoney(r.budget), done: r.done ? 1 : 0 }));
-                this.selectedRowIds = []; this.lSel = []; this.dueSel = [];
+                try { this.skips = C.rowsOf(db, 'SELECT commitmentId, commitmentDate FROM skips').filter(k => C.toInt(k.commitmentId) && C.validISO(k.commitmentDate)); } catch (e) { this.skips = []; }
+                this.selectedRowIds = []; this.lSel = []; this.dueSel = []; this.dueOpen = '';
                 this.loadSettings();
                 this.rev++;
                 this.refreshView(); this.refreshEvents();
@@ -186,13 +235,16 @@
                 if (!db) return false;
                 try {
                     C.inTx(db, () => {
-                        ['commitments', 'expense_logs', 'events'].forEach(t => db.run(`DELETE FROM ${t}`));
+                        ['commitments', 'expense_logs', 'events', 'skips'].forEach(t => db.run(`DELETE FROM ${t}`));
+                        const live = new Set(this.commitments.filter(r => !r._draft).map(r => Number(r.id)));
+                        this.skips.forEach(k => { if (live.has(Number(k.commitmentId))) db.run(SKIP_INS, [Number(k.commitmentId), k.commitmentDate]); });
                         this.commitments.filter(r => !r._draft).forEach(r => db.run(C.INS('commitments'), C.dbValues('commitments', r)));
                         this.expenseLogs.filter(r => !r._draft).forEach(r => db.run(C.INS('expense_logs'), C.dbValues('expense_logs', r)));
                         this.events.filter(r => !r._draft).forEach(r => db.run(C.INS('events'), C.dbValues('events', r)));
                         if (mark) C.writeSetting(db, 'exportPending', '1');
                     });
                     if (mark) this.settings.exportPending = true;
+                    if (this.demo) { this.saveState = 'saved'; if (toast) this.showToast('Demo: changes last until this page is closed or reloaded.', 'info'); return true; }      // the demo is never written to storage
                     if (!store.set(LS_KEY, toB64(db.export()))) { this.saveState = 'error'; this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error'); return false; }
                     this.saveState = 'saved';
                     if (mark) this.cloudSchedule(!!opts.now);
@@ -213,6 +265,7 @@
                 return this.writeStore(true);             // explicit actions (Save, Mark paid, ...) go to the cloud straight away
             },
             writeStore(now) {
+                if (this.demo) { if (this.saveState !== 'dirty') this.saveState = 'saved'; return true; }
                 if (!store.set(LS_KEY, toB64(db.export()))) { this.saveState = 'error'; this.showToast('Browser storage is full or blocked. Use "Export DB" to keep a backup.', 'error'); return false; }
                 if (this.saveState !== 'dirty') this.saveState = 'saved';
                 this.cloudSchedule(!!now);
@@ -258,7 +311,7 @@
                 this.showToast(on ? 'Auto-save is on: table edits are saved as you type.' : 'Auto-save is off: press Save to keep table edits.', 'info');
             },
             // Header: which file this data belongs to, and whether anything is unsaved / not exported yet
-            get cloudOn() { return this.cloud.providers.filter(p => p.connected); },
+            get cloudOn() { return this.demo ? [] : this.cloud.providers.filter(p => p.connected); },
             get cloudName() { return this.cloudOn.map(p => p.label).join(' + '); },
             // Header badge: is the cloud copy up to date, and is it automatic?
             get cloudBadge() {
@@ -267,11 +320,12 @@
                 const t = at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                 if (this.cloud.busy) return { text: 'Backing up…', cls: 'text-sky-300', icon: 'fa-cloud-arrow-up', title: 'Uploading to ' + this.cloudName };
                 if (bad) return { text: 'Backup failed', cls: 'text-red-300', icon: 'fa-triangle-exclamation', title: bad.label + ': ' + bad.last.error + '\nTap to open the cloud backup settings.' };
+                if (this.cloud.conflict) return { text: 'Choose a copy', cls: 'text-amber-300', icon: 'fa-triangle-exclamation', title: 'OneDrive and this device both changed. Choose which copy to keep in the bar below. Nothing is uploaded until then.' };
                 if (this.cloud.needSignin) return { text: 'Sign in to sync', cls: 'text-amber-300', icon: 'fa-cloud', title: 'The cloud sign-in expired on this device.' };
                 if (this.cloud.pending || this.saveState === 'dirty') return { text: this.cloud.auto ? 'Backup pending' : 'Not backed up', cls: 'text-amber-300', icon: 'fa-cloud', title: this.cloud.auto ? 'Changes will upload in a few seconds.' : 'Auto backup is off. Use Save or Back up now.' };
                 return { text: 'Backed up' + (t ? ' ' + t : '') + ' · ' + mode, cls: 'text-emerald-400', icon: 'fa-cloud-arrow-up', title: this.cloudName + ': last backup ' + this.fmtWhen(at) + '\nAuto backup is ' + (this.cloud.auto ? 'on' : 'off') };
             },
-            get dbLabel() { return this.cloudOn.length ? this.cloudName + ' · gowtham_tracker_latest.db' : (this.settings.dbName || this.settings.lastExport || 'New database (not imported)'); },
+            get dbLabel() { return this.demo ? 'Demo data' : this.cloudOn.length ? this.cloudName + ' · gowtham_tracker_latest.db' : (this.settings.dbName || this.settings.lastExport || 'New database (not imported)'); },
             get dbTitle() {
                 const s = this.settings;
                 if (this.cloudOn.length) return ['Using the ' + this.cloudName + ' copy: Apps folder > gowtham_tracker_latest.db', 'Also kept: one dated copy per day (last 14)', s.dbName && s.dbName !== 'gowtham_tracker_latest.db' ? 'Last restored from: ' + s.dbName : ''].filter(Boolean).join('\n');
@@ -360,14 +414,14 @@
             /* ============================== commitments: status + view ============================== */
             get stInfo() {
                 return this.memo('st', '', () => {
-                    const paid = C.buildPaidIndex(this.expenseLogs), map = {}, target = {};
-                    this.commitments.forEach(c => { map[c.id] = C.statusOf(c, paid, this.today); target[c.id] = C.payTarget(c, paid, this.today); });
-                    return { paid, map, target };
+                    const paid = C.buildPaidIndex(this.expenseLogs), skips = C.buildSkipIndex(this.skips), map = {}, target = {};
+                    this.commitments.forEach(c => { map[c.id] = C.statusOf(c, paid, this.today, skips); target[c.id] = C.payTarget(c, paid, this.today, skips); });
+                    return { paid, skips, map, target };
                 });
             },
-            st(c) { return this.stInfo.map[c.id] || { status: 'Pending', missed: [], next: '', paidCount: 0, total: 0, invalid: true, paused: false, pausedDue: [] }; },
+            st(c) { return this.stInfo.map[c.id] || { status: 'Pending', missed: [], next: '', paidCount: 0, skippedCount: 0, total: 0, invalid: true, paused: false, pausedDue: [] }; },
             statusClass(c) {
-                return { Overdue: 'bg-red-500/10 text-red-400', Paid: 'bg-emerald-500/10 text-emerald-400', Completed: 'bg-teal-500/10 text-teal-300', Upcoming: 'bg-slate-500/20 text-slate-300', Pending: 'bg-amber-500/10 text-amber-400', Paused: 'bg-purple-500/10 text-purple-300', Archived: 'bg-slate-500/20 text-slate-400' }[this.st(c).status];
+                return { Overdue: 'bg-red-500/10 text-red-400', Paid: 'bg-emerald-500/10 text-emerald-400', Completed: 'bg-teal-500/10 text-teal-300', Upcoming: 'bg-slate-500/20 text-slate-300', Pending: 'bg-amber-500/10 text-amber-400', Paused: 'bg-purple-500/10 text-purple-300', Skipped: 'bg-slate-500/20 text-slate-300', Archived: 'bg-slate-500/20 text-slate-400' }[this.st(c).status];
             },
             get thisMonthKey() { return C.monthKey(this.today); },
             get thisMonthLabel() { const [y, m] = C.ymd(this.today); return `${C.MONTH_NAMES[m - 1]} ${y}`; },
@@ -376,6 +430,7 @@
             statusSub(c) {
                 const s = this.st(c), pz = s.paused && s.status !== 'Paused' ? ` · ${C.MONTH_NAMES[C.ymd(this.today)[1] - 1]} paused` : '';
                 if (s.status === 'Archived') return 'Archived · not counted anywhere';
+                if (s.status === 'Skipped') return `not required for ${this.thisMonthLabel}` + (s.next ? ` · next ${C.fmtDate(s.next)}` : '');
                 if (s.status === 'Paused') return `paused for ${this.thisMonthLabel}` + (s.next ? ` · next ${C.fmtDate(s.next)}` : '');
                 if (s.status === 'Overdue') return `${s.missed.length} missed · since ${C.fmtDate(s.missed[0])}` + pz;
                 if (s.status === 'Completed') return s.total ? `${s.paidCount}/${s.total} paid` : 'Ended';
@@ -387,12 +442,13 @@
                 const s = this.st(c);
                 if (c._draft || s.status === 'Archived') return { kind: 'none' };
                 if (this.isPausedNow(c)) return { kind: 'resume' };
+                if (s.status === 'Skipped') return { kind: 'unskip' };
                 if (s.status === 'Paid' || s.status === 'Completed') return { kind: s.paidCount ? 'undo' : 'none' };
                 return { kind: 'pay', date: this.stInfo.target[c.id] || '' };
             },
             unpaidThisMonth(c) {
-                const [y, m] = C.ymd(this.today), paid = this.stInfo.paid;
-                return C.occurrencesOf(c, C.monthStart(y, m), C.monthEnd(y, m)).filter(d => !paid.has(C.occKey(c.id, d)));
+                const [y, m] = C.ymd(this.today), paid = this.stInfo.paid, skips = this.stInfo.skips;
+                return C.occurrencesOf(c, C.monthStart(y, m), C.monthEnd(y, m)).filter(d => !paid.has(C.occKey(c.id, d)) && !skips.has(C.occKey(c.id, d)));
             },
             // Commitments paused for the current month and what they leave out of this month's totals
             get pausedNow() {
@@ -458,8 +514,11 @@
                     pay: items.filter(c => k(c) === 'pay').length,
                     undo: items.filter(c => k(c) === 'undo').length,
                     resume: items.filter(c => k(c) === 'resume').length,
+                    skip: items.filter(c => k(c) === 'pay' && this.payState(c).date).length,
+                    unskip: items.filter(c => k(c) === 'unskip').length,
                     pause: items.filter(c => k(c) === 'pay' && this.unpaidThisMonth(c).length).length,
                     undoOld: one && k(one) === 'pay' && this.st(one).paidCount > 0,      // single row: undo an older payment
+                    unskipOld: one && k(one) !== 'unskip' && !C.isArchived(one) ? this.lastSkip(one) : '',      // single row: an earlier "not required" can be undone too
                     date: one && k(one) === 'pay' ? this.payState(one).date : ''
                 };
             },
@@ -512,7 +571,7 @@
                 if (k === 'l') this.lSel = this.lSel.filter(i => i !== Number(o.id));
                 this.rev++;
                 const ops = [opDel(TABLE[k], o.id)];
-                if (k === 'c') ops.push(['UPDATE expense_logs SET commitmentId = NULL WHERE commitmentId = ?', [Number(o.id)]]);
+                if (k === 'c') { ops.push(['UPDATE expense_logs SET commitmentId = NULL WHERE commitmentId = ?', [Number(o.id)]], ['DELETE FROM skips WHERE commitmentId = ?', [Number(o.id)]]); this.skips = this.skips.filter(x => Number(x.commitmentId) !== Number(o.id)); }
                 if (this.save(ops)) { if (k === 'c') this.refreshView(); else if (k === 'e') this.refreshEvents(); else this.runLogQuery(); this.showToast('Deleted.'); }
                 return true;
             },
@@ -544,7 +603,7 @@
             },
             // Pays the next due date of `c` and returns the write operations (pausing ends if the paused month's date is paid).
             payOps(c) {
-                const target = C.payTarget(c, C.buildPaidIndex(this.expenseLogs), this.today);
+                const target = C.payTarget(c, C.buildPaidIndex(this.expenseLogs), this.today, C.buildSkipIndex(this.skips));
                 if (!target || C.isArchived(c) || this.st(c).status === 'Completed') return null;
                 const log = this.payOccurrence(c, target); if (!log) return null;
                 const ops = [opRow('expense_logs', log)];
@@ -553,13 +612,13 @@
             },
             markAsPaid(c) {
                 if (c._draft) { this.showToast('Save the row first (Save row), then mark it paid.', 'info'); return; }
-                if (C.isArchived(c)) { this.showToast(`Restore "${c.name}" from the archive first.`, 'info'); return; }
+                if (C.isArchived(c)) { this.showToast(`Restore "${this.nm(c.name)}" from the archive first.`, 'info'); return; }
                 const e = this.errList('c', c);
-                if (e.length) { this.showToast(`Fix "${c.name || 'this item'}" first: ${e.join(', ')}`, 'error'); return; }
+                if (e.length) { this.showToast(`Fix "${this.nm(c.name || 'this item')}" first: ${e.join(', ')}`, 'error'); return; }
                 const r = this.payOps(c);
-                if (!r) { this.showToast(`"${c.name}" has nothing left to pay.`, 'info'); return; }
+                if (!r) { this.showToast(`"${this.nm(c.name)}" has nothing left to pay.`, 'info'); return; }
                 this.rev++;
-                if (this.save(r.ops)) this.showToast(`Logged "${c.name}" for due date ${C.fmtDate(r.target)}.` + (r.resumed ? ' It is no longer paused.' : ''));
+                if (this.save(r.ops)) this.showToast(`Logged "${this.nm(c.name)}" for due date ${C.fmtDate(r.target)}.` + (r.resumed ? ' It is no longer paused.' : ''));
             },
             // The payment "Mark pending" / undo removes: the most recently LOGGED payment (latest actual date, then newest row).
             // When the row shows Paid, this month's payment is preferred so the month really becomes pending again.
@@ -574,12 +633,12 @@
                 const pairs = list.map(c => [c, this.undoLogFor(c)]).filter(p => p[1]);
                 if (!pairs.length) { this.showToast('No linked payment to undo.', 'info'); return; }
                 const [c0, l0] = pairs[0];
-                const msg = pairs.length === 1 ? `Mark "${c0.name}" as pending again?\nThis removes the payment of ${fmtMoney(l0.amount, l0.currency)} for due date ${C.fmtDate(l0.commitmentDate)} from the Expense Log.`
+                const msg = pairs.length === 1 ? `Mark "${this.nm(c0.name)}" as pending again?\nThis removes the payment of ${this.money(l0.amount, l0.currency)} for due date ${C.fmtDate(l0.commitmentDate)} from the Expense Log.`
                     : `Mark ${pairs.length} commitments as pending again?\nThis removes their latest payment from the Expense Log.`;
                 if (!confirm(msg)) return;
                 const ids = new Set(pairs.map(p => p[1].id));
                 this.expenseLogs = this.expenseLogs.filter(x => !ids.has(x.id)); this.lView.ids = this.lView.ids.filter(i => !ids.has(i)); this.lView.total = Math.max(0, this.lView.total - ids.size); this.rev++;
-                if (this.save([...ids].map(id => opDel('expense_logs', id)))) this.showToast(pairs.length === 1 ? `"${c0.name}" is pending again: due date ${C.fmtDate(l0.commitmentDate)} is unpaid.` : `${pairs.length} commitments are pending again.`, 'info');
+                if (this.save([...ids].map(id => opDel('expense_logs', id)))) this.showToast(pairs.length === 1 ? `"${this.nm(c0.name)}" is pending again: due date ${C.fmtDate(l0.commitmentDate)} is unpaid.` : `${pairs.length} commitments are pending again.`, 'info');
             },
             markAsPending(c) { this.undoPayments([c]); },
             markSelectedAsPending() { this.undoPayments(this.selectedItems.filter(c => this.payState(c).kind === 'undo')); },
@@ -595,7 +654,8 @@
                 if (!confirm(`Delete ${items.length} commitments?\nTheir payment history in the Expense Log is kept (unlinked).`)) return;
                 const ids = new Set(items.map(c => Number(c.id))), ops = [];
                 this.expenseLogs.forEach(l => { if (ids.has(Number(l.commitmentId))) l.commitmentId = ''; });
-                ids.forEach(id => { ops.push(opDel('commitments', id)); ops.push(['UPDATE expense_logs SET commitmentId = NULL WHERE commitmentId = ?', [id]]); });
+                ids.forEach(id => { ops.push(opDel('commitments', id)); ops.push(['UPDATE expense_logs SET commitmentId = NULL WHERE commitmentId = ?', [id]]); ops.push(['DELETE FROM skips WHERE commitmentId = ?', [id]]); });
+                this.skips = this.skips.filter(x => !ids.has(Number(x.commitmentId)));
                 this.commitments = this.commitments.filter(c => !ids.has(Number(c.id))); this.selectedRowIds = []; this.rev++;
                 if (this.save(ops)) { this.refreshView(); this.showToast(`Deleted ${ids.size} commitments.`); }
             },
@@ -609,18 +669,103 @@
                 if (!n) { this.showToast(skipped ? 'Selected items have invalid fields. Fix the red fields first.' : 'Nothing to pay in the selection.', skipped ? 'error' : 'info'); return; }
                 if (this.save(ops)) this.showToast(`Logged ${n} payment(s).` + (skipped ? ` ${skipped} skipped (invalid).` : ''));
             },
+            /* ----- "not required this time": settles ONE due date without a payment (nothing is logged, nothing is overdue) ----- */
+            skipOps(c, date) {
+                if (!date || this.stInfo.paid.has(C.occKey(c.id, date)) || this.skips.some(k => Number(k.commitmentId) === Number(c.id) && k.commitmentDate === date)) return null;
+                this.skips.push({ commitmentId: Number(c.id), commitmentDate: date });
+                const ops = [[SKIP_INS, [Number(c.id), date]]];
+                if (this.isPausedNow(c) && C.monthKey(date) === c.pausedMonth) { c.pausedMonth = ''; ops.push(opFlags(c)); }
+                return ops;
+            },
+            unskipOps(c, date) {
+                const n = this.skips.length;
+                this.skips = this.skips.filter(k => !(Number(k.commitmentId) === Number(c.id) && k.commitmentDate === date));
+                return this.skips.length < n ? [['DELETE FROM skips WHERE commitmentId = ? AND commitmentDate = ?', [Number(c.id), date]]] : null;
+            },
+            // The skip that "Undo" removes for a commitment: this month's if there is one, else the most recent one.
+            lastSkip(c) {
+                const mine = this.skips.filter(k => Number(k.commitmentId) === Number(c.id)).map(k => k.commitmentDate).sort();
+                return mine.filter(d => C.monthKey(d) === this.thisMonthKey).pop() || mine.pop() || '';
+            },
+            skipList(list) {          // [commitment, due date] pairs
+                const ops = [], done = [];
+                list.forEach(([c, date]) => { if (c._draft || C.isArchived(c)) return; const o = this.skipOps(c, date); if (o) { ops.push(...o); done.push([c, date]); } });
+                this.rev++;
+                if (!done.length) { this.showToast('Nothing to mark as not required.', 'info'); return false; }
+                if (!this.save(ops)) return false;
+                this.showToast(done.length === 1 ? `"${this.nm(done[0][0].name)}" is not required for ${C.fmtDate(done[0][1])}. Nothing was logged; undo it any time.` : `${done.length} due dates marked as not required.`, 'info');
+                return true;
+            },
+            unskipList(list) {
+                const ops = [];
+                list.forEach(([c, date]) => { const o = date && this.unskipOps(c, date); if (o) ops.push(...o); });
+                this.rev++;
+                if (!ops.length) { this.showToast('Nothing to undo.', 'info'); return false; }
+                if (this.save(ops)) this.showToast(ops.length === 1 ? 'That due date is required again.' : `${ops.length} due dates are required again.`, 'info');
+                return true;
+            },
+            skipSelected() { this.skipList(this.selectedItems.filter(c => this.payState(c).kind === 'pay').map(c => [c, this.payState(c).date])); },
+            unskipSelected() { const one = this.sel.one, list = this.selectedItems.filter(c => this.payState(c).kind === 'unskip' || c === one); this.unskipList(list.map(c => [c, this.lastSkip(c)])); },
+
+            /* ----- dashboard "Due dates" card: the same actions for one due date, or for every ticked row ----- */
+            dueActs(o) {              // which buttons a due-date row offers
+                const live = !C.isArchived(o.c);
+                return { pay: live && !o.paid && !o.skipped, skip: live && !o.paid && !o.skipped, unskip: o.skipped, unpay: o.paid && !!o.log,
+                    pause: live && !o.paid && !o.skipped && !o.paused && o.month === this.thisMonthKey, resume: o.paused, archive: live };
+            },
+            get dueSelRows() { return this.dueRows.filter(o => this.dueIsSel(o)); },
+            get dueSelActs() {
+                const r = this.dueSelRows.map(o => this.dueActs(o)), n = k => r.filter(a => a[k]).length;
+                return { n: r.length, pay: n('pay'), skip: n('skip'), unskip: n('unskip'), pause: n('pause'), resume: n('resume') };
+            },
+            dueDo(act, rows) {
+                rows = (rows || []).filter(o => this.dueActs(o)[act]);
+                if (!rows.length) { this.showToast('Nothing to do for that selection.', 'info'); return; }
+                const names = rows.length === 1 ? `"${this.nm(rows[0].c.name)}"` : `${rows.length} due dates`;
+                if (act === 'pay') {
+                    const ops = []; let n = 0, bad = 0;
+                    rows.forEach(o => {
+                        if (this.errList('c', o.c).length) { bad++; return; }
+                        const log = this.payOccurrence(o.c, o.date); if (!log) return;
+                        n++; ops.push(opRow('expense_logs', log));
+                        if (this.isPausedNow(o.c) && o.month === o.c.pausedMonth) { o.c.pausedMonth = ''; ops.push(opFlags(o.c)); }
+                    });
+                    this.rev++;
+                    if (!n) { this.showToast(bad ? 'Fix the invalid commitment first (Pay tab).' : 'Nothing to pay.', bad ? 'error' : 'info'); return; }
+                    if (this.save(ops)) { this.runLogQuery(); this.showToast(n === 1 ? `Logged ${names} for due date ${C.fmtDate(rows[0].date)}.` : `Logged ${n} payment(s).` + (bad ? ` ${bad} skipped (invalid).` : '')); }
+                } else if (act === 'unpay') {
+                    if (!confirm(`Mark ${names} as pending again?\nThis removes the linked payment(s) from the Expense Log.`)) return;
+                    const ids = new Set(rows.map(o => o.log.id));
+                    this.expenseLogs = this.expenseLogs.filter(x => !ids.has(x.id)); this.lSel = this.lSel.filter(i => !ids.has(i)); this.rev++;
+                    if (this.save([...ids].map(id => opDel('expense_logs', id)))) { this.runLogQuery(); this.showToast(`${names} ${rows.length === 1 ? 'is' : 'are'} pending again.`, 'info'); }
+                } else if (act === 'skip') this.skipList(rows.map(o => [o.c, o.date]));
+                else if (act === 'unskip') this.unskipList(rows.map(o => [o.c, o.date]));
+                else if (act === 'pause' || act === 'resume') {
+                    const cs = [...new Set(rows.map(o => o.c))];
+                    cs.forEach(c => { c.pausedMonth = act === 'pause' ? this.thisMonthKey : ''; }); this.rev++;
+                    if (this.save(cs.map(opFlags))) this.showToast(act === 'pause' ? `Paused ${cs.length === 1 ? `"${this.nm(cs[0].name)}"` : cs.length + ' commitments'} for ${this.thisMonthLabel}. It comes back by itself next month.` : `Resumed ${cs.length} commitment(s).`, 'info');
+                } else if (act === 'archive') {
+                    const cs = [...new Set(rows.map(o => o.c))];
+                    if (!confirm(`Archive ${cs.length === 1 ? `"${this.nm(cs[0].name)}"` : cs.length + ' commitments'}?\nArchived commitments are left out of every total. Restore them from Pay → Archived.`)) return;
+                    cs.forEach(c => { c.archived = 1; c.pausedMonth = ''; }); this.rev++;
+                    const gone = new Set(cs.map(c => Number(c.id))); this.selectedRowIds = this.selectedRowIds.filter(i => !gone.has(Number(i)));
+                    if (this.save(cs.map(opFlags))) { this.refreshView(); this.showToast(`Archived ${cs.length} commitment(s).`); }
+                }
+                this.dueOpen = ''; this.dueSel = this.dueSel.filter(k => this.dueBase.some(o => this.dueKey(o) === k));
+            },
+
             /* ----- pause (this month only) / archive ----- */
             togglePause(c) {
                 if (c._draft) { this.showToast('Save the row first, then pause it.', 'info'); return; }
                 if (this.isPausedNow(c)) {
                     c.pausedMonth = ''; this.rev++;
-                    if (this.save([opFlags(c)])) this.showToast(`Resumed "${c.name}": it counts in ${this.thisMonthLabel}'s totals again.`);
+                    if (this.save([opFlags(c)])) this.showToast(`Resumed "${this.nm(c.name)}": it counts in ${this.thisMonthLabel}'s totals again.`);
                     return;
                 }
                 const due = this.unpaidThisMonth(c);
-                if (!due.length) { this.showToast(`"${c.name}" has nothing left to pay in ${this.thisMonthLabel}, so there is nothing to pause.`, 'info'); return; }
+                if (!due.length) { this.showToast(`"${this.nm(c.name)}" has nothing left to pay in ${this.thisMonthLabel}, so there is nothing to pause.`, 'info'); return; }
                 c.pausedMonth = this.thisMonthKey; this.rev++;
-                if (this.save([opFlags(c)])) this.showToast(`Paused "${c.name}" for ${this.thisMonthLabel}: ${fmtMoney(C.toMoney(c.amount) * due.length, c.currency)} left out of this month's dashboard. It comes back by itself next month.`, 'info');
+                if (this.save([opFlags(c)])) this.showToast(`Paused "${this.nm(c.name)}" for ${this.thisMonthLabel}: ${this.money(C.toMoney(c.amount) * due.length, c.currency)} left out of this month's dashboard. It comes back by itself next month.`, 'info');
             },
             pauseSelected() {
                 const items = this.selectedItems.filter(c => !this.isPausedNow(c) && this.unpaidThisMonth(c).length);
@@ -633,7 +778,7 @@
                 if (c._draft) return;
                 c.archived = on ? 1 : 0; if (on) c.pausedMonth = '';
                 this.selectedRowIds = this.selectedRowIds.filter(i => Number(i) !== Number(c.id)); this.rev++;
-                if (this.save([opFlags(c)])) { this.refreshView(); this.showToast(on ? `Archived "${c.name}". It is left out of every total until you restore it (Pay → Archived).` : `Restored "${c.name}". It counts in the dashboard again.`); }
+                if (this.save([opFlags(c)])) { this.refreshView(); this.showToast(on ? `Archived "${this.nm(c.name)}". It is left out of every total until you restore it (Pay → Archived).` : `Restored "${this.nm(c.name)}". It counts in the dashboard again.`); }
             },
             archiveSelected() {
                 const items = this.selectedItems; if (!items.length) return;
@@ -737,7 +882,7 @@
             get liveL() { return this.memo('ll', '', () => this.expenseLogs.filter(l => !l._draft)); },
             get win() { return this.memo('win', JSON.stringify(this.dash), () => C.makeWindow(this.dash, this.today)); },
             get prevWin() { return this.memo('pwin', JSON.stringify(this.dash), () => C.previousWindow(this.win)); },
-            get an() { return this.memo('an', JSON.stringify(this.dash), () => C.analyze(this.liveC, this.liveL, this.win, this.today)); },
+            get an() { return this.memo('an', JSON.stringify(this.dash), () => C.analyze(this.liveC, this.liveL, this.win, this.today, this.stInfo.skips)); },
             // Every currency with obligations or spend in the window (or spend in the previous window). Amounts in different
             // currencies are never added up, so charts and rankings show one block per currency.
             get chartCurs() {
@@ -766,8 +911,8 @@
             get fixedTerm() {
                 return this.memo('ft', '', () => {
                     const all = this.liveC.filter(c => !C.isArchived(c) && c.frequency !== 'One-Time' && C.validISO(c.endDate)).map(c => {
-                        const s = this.st(c), left = Math.max(0, s.total - s.paidCount);
-                        return { c, s, left, leftAmt: C.toMoney(left * c.amount), pct: s.total ? Math.round((s.paidCount / s.total) * 100) : 0 };
+                        const s = this.st(c), left = Math.max(0, s.total - s.paidCount - s.skippedCount);      // skipped ("not required") dates are not left to pay
+                        return { c, s, left, leftAmt: C.toMoney(left * c.amount), pct: s.total ? Math.round(((s.total - left) / s.total) * 100) : 0 };
                     }).filter(x => x.s.total > 0 && !x.s.invalid);
                     return { active: all.filter(x => x.left > 0).sort((a, b) => a.c.endDate.localeCompare(b.c.endDate)), done: all.filter(x => x.left === 0).length };
                 });
@@ -786,9 +931,9 @@
                 return { actual: `Expense Log spend by ${by}`, outstanding: `Unpaid due dates by ${by}`, planned: `All due dates by ${by}`, projected: `Spent + still to pay, by ${by}` }[this.bdEff];
             },
             bdTotalText(b, c) {
-                if (b.mode === 'planned') return `${fmtMoney(b.spent, c)} paid + ${fmtMoney(b.due, c)} to pay`;
-                if (b.mode === 'projected') return `${fmtMoney(b.spent, c)} spent + ${fmtMoney(b.due, c)} to pay = ${fmtMoney(b.total, c)}`;
-                return 'total ' + fmtMoney(b.total, c);
+                if (b.mode === 'planned') return `${this.money(b.spent, c)} paid + ${this.money(b.due, c)} to pay`;
+                if (b.mode === 'projected') return `${this.money(b.spent, c)} spent + ${this.money(b.due, c)} to pay = ${this.money(b.total, c)}`;
+                return 'total ' + this.money(b.total, c);
             },
             get bdEmpty() { return { actual: 'Nothing logged in this window.', outstanding: 'Nothing left to pay in this window.', planned: 'No due dates in this window.', projected: 'No spend and nothing to pay in this window.' }[this.bdEff]; },
             // Opens the Expense Log filtered to the dashboard window (and to one category / item when a row is given)
@@ -804,7 +949,7 @@
             },
             /* ---- "Due dates & still to pay": one list for the dashboard window OR a period from today, with status chips,
              *      filters (search / category / commitment / amount / overdue) and totals of what is shown and of the ticked rows. */
-            dueState(o) { return o.paused ? 'Paused' : o.paid ? 'Paid' : o.overdue ? 'Overdue' : 'Pending'; },
+            dueState(o) { return o.skipped ? 'Skipped' : o.paused ? 'Paused' : o.paid ? 'Paid' : o.overdue ? 'Overdue' : 'Pending'; },
             get dueSpan() {
                 const t = this.today, r = this.dueRange;
                 if (r === 'window') return { start: this.win.start, end: this.win.end, label: this.win.label };
@@ -814,10 +959,10 @@
             get dueBase() {
                 return this.memo('db', JSON.stringify(this.dash) + this.dueRange + this.dueF.overdue, () => {
                     const t = this.today, sp = this.dueSpan, byDate = (a, b) => a.date.localeCompare(b.date) || String(a.c.name).localeCompare(String(b.c.name));
-                    if (this.dueRange === 'window') return this.an.pausedOcc.length ? [...this.an.occ, ...this.an.pausedOcc].sort(byDate) : this.an.occ;
+                    if (this.dueRange === 'window') return (this.an.pausedOcc.length || this.an.skippedOcc.length) ? [...this.an.occ, ...this.an.pausedOcc, ...this.an.skippedOcc].sort(byDate) : this.an.occ;
                     // from today; optionally also every unpaid date before today (overdue money is still to pay)
-                    const a = C.analyze(this.liveC, this.liveL, { start: this.dueF.overdue ? '1990-01-01' : t, end: sp.end, months: [] }, t);
-                    return [...a.occ, ...a.pausedOcc].filter(o => o.date >= t || (this.dueF.overdue && !o.paid)).sort(byDate);
+                    const a = C.analyze(this.liveC, this.liveL, { start: this.dueF.overdue ? '1990-01-01' : t, end: sp.end, months: [] }, t, this.stInfo.skips);
+                    return [...a.occ, ...a.pausedOcc, ...a.skippedOcc].filter(o => o.date >= t || (this.dueF.overdue && !o.paid && !o.skipped)).sort(byDate);
                 });
             },
             dueMatch(o) {      // every filter except the status chip
@@ -828,7 +973,7 @@
             statusIs(o, k) { const st = this.dueState(o); return k === 'All' || st === k || (k === 'Unpaid' && (st === 'Overdue' || st === 'Pending')); },
             get dueMatched() { return this.dueBase.filter(o => this.dueMatch(o)); },
             get dueCounts() { const m = {}; DUE_STATUS.forEach(k => { m[k] = this.dueMatched.filter(o => this.statusIs(o, k)).length; }); return m; },
-            get dueKeys() { return stable('dk', DUE_STATUS.filter(k => k !== 'Paused' || this.dueCounts.Paused)); },
+            get dueKeys() { return stable('dk', DUE_STATUS.filter(k => (k !== 'Paused' && k !== 'Skipped') || this.dueCounts[k])); },
             get dueRows() { return this.dueMatched.filter(o => this.statusIs(o, this.dueFilter)); },
             get dueAll() { return this.dueBase; },
             get dueOptions() {
@@ -852,8 +997,8 @@
             // "shown" leaves paused rows out (like the rest of the dashboard); the TICKED total counts every ticked row,
             // paused ones included - untick a row to leave it out.
             get dueTotals() {
-                const shown = this.dueRows.filter(o => !o.paused), sel = this.dueRows.filter(o => this.dueIsSel(o)), pz = this.dueRows.filter(o => o.paused);
-                return { shown: this.sumBy(shown), shownN: shown.length, sel: this.sumBy(sel), selN: sel.length, selPaused: sel.filter(o => o.paused).length, paused: this.sumBy(pz), pausedN: pz.length };
+                const shown = this.dueRows.filter(o => !o.paused && !o.skipped), sel = this.dueRows.filter(o => this.dueIsSel(o)), pz = this.dueRows.filter(o => o.paused), sk = this.dueRows.filter(o => o.skipped);
+                return { shown: this.sumBy(shown), shownN: shown.length, sel: this.sumBy(sel), selN: sel.length, selPaused: sel.filter(o => o.paused).length, paused: this.sumBy(pz), pausedN: pz.length, skippedN: sk.length };
             },
             reviewPaused() { this.tab = 'pay'; this.setPayView('active'); this.f = { ...this.f, status: 'Paused' }; },
             get paidPct() { return this.an.occ.length ? Math.round((this.an.paidCount / this.an.occ.length) * 100) : 0; },
@@ -863,7 +1008,7 @@
             sumBy(items) { const m = {}; items.forEach(i => C.addTo(m, i.currency || 'AED', Number(i.amount) || 0)); return m; },
             fmtMap(map, signed = false) {
                 const e = Object.entries(map || {}); if (!e.length) return '—';
-                return e.map(([c, v]) => (signed && v > 0.005 ? '+' : '') + fmtMoney(v, c)).join('\n');
+                return e.map(([c, v]) => (signed && v > 0.005 ? '+' : '') + this.money(v, c)).join('\n');
             },
             spendDeltaFor(cur) {
                 const t = this.trendFor(cur);
@@ -889,8 +1034,8 @@
                 Chart.defaults.color = light ? '#475569' : '#94a3b8'; Chart.defaults.borderColor = light ? 'rgba(203,213,225,.8)' : 'rgba(51,65,85,.55)'; Chart.defaults.font.size = 11;
                 const base = cur => ({
                     responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { boxWidth: 12, usePointStyle: true } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${cur} ${fmtNum(c.parsed.y)}` } } },
-                    scales: { x: { grid: { display: false } }, y: { beginAtZero: true, title: { display: true, text: cur }, ticks: { callback: v => compact.format(v) } } }
+                    plugins: { legend: { labels: { boxWidth: 12, usePointStyle: true } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${cur} ${PRIV ? MASK : fmtNum(c.parsed.y)}` } } },
+                    scales: { x: { grid: { display: false } }, y: { beginAtZero: true, title: { display: true, text: cur }, ticks: { callback: v => PRIV ? '•••' : compact.format(v) } } }
                 });
                 const mk = (id, type, data, cur) => {
                     const el = document.getElementById(id); if (!el) return;
@@ -935,12 +1080,13 @@
                 const input = event.target, file = input.files && input.files[0];
                 if (!file) return;
                 try {
+                    if (this.demo) { this.showToast('This is the demo. Exit the demo first, then import your file.', 'info'); return; }
                     if (!confirm('Importing replaces ALL current data in this browser (your file on disk is not changed). Continue?')) return;
-                    await this.importBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+                    if (await this.importBytes(new Uint8Array(await file.arrayBuffer()), file.name)) this.cloudSchedule(true);      // the imported data is this device's newest state
                 } finally { input.value = ''; }
             },
             // Shared by "Import DB" (a file) and "Restore" (a cloud backup). The caller has already asked for confirmation.
-            async importBytes(u8, name) {
+            async importBytes(u8, name, quiet) {
                 try {
                     const SQL = await getSQL();
                     const candidate = new SQL.Database(u8), prev = db;
@@ -954,7 +1100,7 @@
                         db = candidate; clearTimeout(this._saveTimer);
                         this.loadDataFromDB(); this.persist({ toast: false, mark: false }); this.runLogQuery();
                         if (prev) prev.close();
-                        this.showToast((res.upgradedFrom ? 'Imported and upgraded to v5: ' : 'Imported: ') + fname);
+                        if (!quiet) this.showToast((res.upgradedFrom ? 'Imported and upgraded to v5: ' : 'Imported: ') + fname);
                         return true;
                     } catch (err) {
                         db = prev; try { candidate.close(); } catch (_) { } try { if (db) this.loadDataFromDB(); } catch (_) { }
@@ -967,74 +1113,118 @@
             cloud: { pending: false, promptLogin: false, needSignin: false, conflict: null, hint: '', providers: [], auto: true, busy: false, error: '', ids: { google: '', ms: '' }, redirect: '', restore: { open: false, provider: '', files: [], loading: false } },
             cloudInit() {
                 const B = window.CloudBackup; if (!B) return;
-                const sync = () => { const st = B.status(); this.cloud.providers = st.providers; this.cloud.auto = st.auto; this.cloud.busy = st.busy; this.cloud.pending = st.pending; this.cloud.error = st.error; };
+                const sync = () => { const st = B.status(); this.cloud.providers = st.providers; this.cloud.auto = st.auto; this.cloud.busy = st.busy; this.cloud.pending = st.pending; this.cloud.error = st.error; if (st.conflict) this.cloud.conflict = st.conflict; };
                 B.onChange(sync); { const c = B.config(); this.cloud.ids = { google: c.googleClientId, ms: c.msClientId }; } this.cloud.redirect = B.redirectUri(); sync();
+                document.addEventListener('visibilitychange', () => { if (!document.hidden) this.cloudSync(); });      // back in front: another device may have saved
             },
+            get hasData() { return this.commitments.length + this.expenseLogs.length + this.events.length > 0; },
+            // The demo never touches the cloud: sample data must not be uploaded over (or mixed with) a real backup.
+            cloudBlocked() { if (!this.demo) return false; this.showToast('This is the demo. Exit the demo to use cloud backup.', 'info'); return true; },
             /* On open (and when the app comes back to the front): sign in if needed, then keep this device and OneDrive in step. */
             async cloudStartup() {
-                const B = window.CloudBackup; if (!B || !db) return;
+                const B = window.CloudBackup; if (!B || !db || this.demo) return;
                 const c = this.cloud; c.hint = '';
                 if (!B.isConnected('ms') && !B.isConnected('google')) { c.promptLogin = store.get('tracker_cloud_prompt_off') !== '1'; return; }
                 c.promptLogin = false;
-                document.addEventListener('visibilitychange', () => { if (!document.hidden && !this._syncBusy) this.cloudSync(); }, { once: false });
                 await this.cloudSync();
             },
+            /* Compares this device with the OneDrive copy and does the one safe thing:
+             *   cloud is newer, nothing changed here      -> load it
+             *   only this device changed (or cloud empty) -> upload
+             *   both changed, or this device has data and has never synced -> ask (never guess)                       */
             async cloudSync(interactive) {
-                const B = window.CloudBackup; if (!B || !B.isConnected('ms') || this._syncBusy || !db) return;
-                this._syncBusy = true; const c = this.cloud;
+                const B = window.CloudBackup; if (!B || this.demo || !B.isConnected('ms') || this._syncBusy || !db) return;
+                this._syncBusy = true; const c = this.cloud; c.hint = '';
                 try {
                     const r = await B.checkSync('ms', !!interactive);
-                    c.needSignin = r.action === 'signin'; c.conflict = null;
-                    const editing = this.draftCount || this.saveState === 'dirty';
-                    if (r.action === 'load') {
-                        if (editing) c.conflict = r.file;                                   // never replace data the user is typing
-                        else if (await this.importBytes(await B.download('ms', r.file), r.file.name)) { B.markSynced('ms', r.file); this.showToast('Loaded the newer copy from OneDrive.', 'info'); }
-                    } else if (r.action === 'conflict') c.conflict = r.file;
-                    else if (r.action === 'upload' || r.action === 'empty') { if (!editing) await B.backupNow(() => this.cloudBytes(), { interactive: false, force: true }); }
+                    c.needSignin = r.action === 'signin';
+                    if (r.action === 'signin' || r.action === 'off') return;
+                    const editing = !!this.draftCount || this.saveState === 'dirty', first = !B.hasSynced('ms');
+                    let act = r.action;
+                    if (act === 'load' && (editing || (first && this.hasData))) act = 'conflict';      // never replace data silently
+                    if (act === 'conflict' && !this.hasData && !editing) act = 'load';                // an empty device has nothing to lose
+                    if (act === 'conflict') { c.conflict = r.file; return; }
+                    c.conflict = null;
+                    if (act === 'load') { if (await this.importBytes(await B.download('ms', r.file), r.file.name, true)) { B.markSynced('ms', r.file); this.showToast('Loaded the newer copy from OneDrive.', 'info'); } }
+                    else if ((act === 'upload' || act === 'empty') && !editing) await B.backupNow(() => this.cloudBytes(), { interactive: false, force: true });
                 } catch (e) { c.hint = 'OneDrive check failed: ' + (e.message || e); }
                 finally { this._syncBusy = false; }
             },
-            async cloudLoginMs() {                       // from the sign-in banner (a tap, so the popup is allowed)
-                await this.cloudConnect('ms'); this.cloud.promptLogin = false; this.cloud.needSignin = false;
-                await this.cloudSync(true);
-            },
+            async cloudLoginMs() { await this.cloudConnect('ms'); },      // from the sign-in banner (a tap, so the popup is allowed)
+            // Both sides changed: the copy that loses is first saved to OneDrive as "gowtham_tracker_kept_…" (see Restore…).
             async cloudResolve(useCloud) {
-                const f = this.cloud.conflict, B = window.CloudBackup; if (!f) return;
-                if (useCloud) { if (!confirm('Replace the data on this device with the OneDrive copy? Changes made here since the last sync will be lost.')) return;
-                    if (await this.importBytes(await B.download('ms', f), f.name)) { B.markSynced('ms', f); this.cloud.conflict = null; } }
-                else { this.flush(); await B.backupNow(() => this.cloudBytes(), { interactive: true, force: true }); this.cloud.conflict = null; this.showToast('OneDrive now has this device\'s data.'); }
+                const f = this.cloud.conflict, B = window.CloudBackup; if (!f || this.cloudBlocked()) return;
+                try {
+                    if (useCloud) {
+                        if (!confirm('Replace the data on this device with the OneDrive copy?\n\nThis device\'s current data is first saved to OneDrive as a "kept" copy, so it can still be restored.')) return;
+                        const cloudBytes = await B.download('ms', f);
+                        if (this.hasData) await B.keepCopy('ms', this.cloudBytes(), 'device');
+                        if (await this.importBytes(cloudBytes, f.name, true)) { B.markSynced('ms', f); this.cloud.conflict = null; this.showToast('This device now shows the OneDrive copy.', 'info'); }
+                    } else {
+                        if (!confirm('Replace the OneDrive copy with this device\'s data?\n\nThe current OneDrive copy is first saved as a "kept" copy, so it can still be restored.')) return;
+                        this.flush();
+                        await B.keepCopy('ms', await B.download('ms', f), 'cloud');
+                        const r = await B.backupNow(() => this.cloudBytes(), { interactive: true, force: true });
+                        if (String(r.ms || '').startsWith('error')) throw new Error(String(r.ms).slice(7));
+                        this.cloud.conflict = null; this.showToast('OneDrive now has this device\'s data.');
+                    }
+                } catch (e) { this.showToast('Could not finish: ' + (e.message || e) + ' Nothing was replaced.', 'error'); }
             },
             cloudDismissPrompt() { this.cloud.promptLogin = false; store.set('tracker_cloud_prompt_off', '1'); },
-            cloudBytes() { if (!db) throw new Error('The database is not open yet.'); return db.export(); },   // only SAVED data is backed up, same as Export DB
-            cloudSchedule(now) { if (window.CloudBackup && db) window.CloudBackup.schedule(() => db.export(), now ? 0 : 5000); },
+            cloudBytes() { if (!db || this.demo) throw new Error(this.demo ? 'The demo is never backed up.' : 'The database is not open yet.'); return db.export(); },   // only SAVED data is backed up, same as Export DB
+            cloudSchedule(now) { if (window.CloudBackup && db && !this.demo) window.CloudBackup.schedule(() => db.export(), now ? 0 : 5000); },
             cloudSaveId(p) { window.CloudBackup.setClientId(p, this.cloud.ids[p]); },
+            // Connecting only signs in. What happens next depends on what the drive already holds - an existing backup is
+            // never replaced without asking.
             async cloudConnect(p) {
-                try { if (this.saveState === 'dirty') this.flush(); await window.CloudBackup.connect(p, () => this.cloudBytes()); this.showToast('Connected. Backup uploaded.'); }
-                catch (e) { this.showToast(e.message || 'Could not connect', 'error'); }
+                const B = window.CloudBackup; if (!B || this.cloudBlocked()) return;
+                try {
+                    if (this.saveState === 'dirty') this.flush();
+                    await B.connect(p);
+                    this.cloud.promptLogin = false;
+                    if (p === 'ms') { this.cloud.needSignin = false; await this.cloudSync(true); if (!this.cloud.conflict && !this.cloud.hint) this.showToast('OneDrive connected.'); return; }
+                    const has = (await B.list(p)).some(f => f.name === 'gowtham_tracker_latest.db');
+                    if (has && !this.hasData) { this.showToast('Connected. Google Drive already has backups - use Restore… to load one.', 'info'); return; }
+                    if (has && !confirm('Google Drive already has a backup.\n\nOK = replace it with this device\'s data · Cancel = keep it (use Restore… to load it)')) { this.showToast('Connected. The existing backup was kept.', 'info'); return; }
+                    await B.backupNow(() => this.cloudBytes(), { interactive: true, force: true });
+                    this.showToast('Connected. Backup uploaded.');
+                } catch (e) { this.showToast(e.message || 'Could not connect', 'error'); }
             },
-            cloudDisconnect(p) { if (confirm('Disconnect from this account on this device? Existing backups in your drive are kept.')) window.CloudBackup.disconnect(p); },
+            cloudDisconnect(p) { if (confirm('Disconnect from this account on this device? Existing backups in your drive are kept.')) { window.CloudBackup.disconnect(p); if (p === 'ms') { this.cloud.conflict = null; this.cloud.needSignin = false; } } },
             async cloudBackupNow() {
-                try { if (this.saveState === 'dirty' && !this.settings.autoSave) { if (!confirm('You have unsaved changes. OK = save them first · Cancel = back up the last saved version')) { /* keep last saved */ } else this.persist({ toast: false }); } else this.flush();
-                    const r = await window.CloudBackup.backupNow(() => this.cloudBytes(), { interactive: true, force: true });
+                if (this.cloudBlocked()) return;
+                if (this.cloud.conflict) { this.showToast('OneDrive and this device both changed. Choose which copy to keep in the bar at the top first.', 'info'); return; }
+                try {
+                    if (this.saveState === 'dirty' && !this.settings.autoSave) { if (confirm('You have unsaved changes. OK = save them first · Cancel = back up the last saved version')) this.persist({ toast: false }); } else this.flush();
+                    // not forced for OneDrive: a copy saved by another device is detected instead of being overwritten
+                    const r = await window.CloudBackup.backupNow(() => this.cloudBytes(), { interactive: true, force: !window.CloudBackup.isConnected('ms') });
+                    if (r.ms === 'conflict') { this.showToast('OneDrive has a newer copy from another device. Choose which copy to keep.', 'info'); return; }
                     const bad = Object.entries(r).filter(([, v]) => String(v).startsWith('error'));
-                    this.showToast(bad.length ? 'Backup problem: ' + bad.map(b => b[1]).join('; ') : 'Backup uploaded.', bad.length ? 'error' : 'success'); }
+                    this.showToast(bad.length ? 'Backup problem: ' + bad.map(b => b[1]).join('; ') : (Object.values(r).every(v => v === 'unchanged') ? 'Already backed up - nothing has changed.' : 'Backup uploaded.'), bad.length ? 'error' : 'success'); }
                 catch (e) { this.showToast(e.message || 'Backup failed', 'error'); }
             },
             async cloudRestoreOpen(p) {
+                if (this.cloudBlocked()) return;
                 const R = this.cloud.restore; R.open = true; R.provider = p; R.files = []; R.loading = true;
                 try { R.files = await window.CloudBackup.list(p); if (!R.files.length) this.showToast('No backups found in that drive yet.', 'info'); }
                 catch (e) { this.showToast(e.message || 'Could not list backups', 'error'); R.open = false; }
                 R.loading = false;
             },
             async cloudRestore(f) {
+                if (this.cloudBlocked()) return;
                 if (!confirm(`Restore "${f.name}"?\n\nThis replaces ALL current data in this browser with that backup.`)) return;
-                try { const u8 = await window.CloudBackup.download(this.cloud.restore.provider, f); if (await this.importBytes(u8, f.name)) { this.cloud.restore.open = false; if (f.name === 'gowtham_tracker_latest.db') window.CloudBackup.markSynced(this.cloud.restore.provider, f); } }
-                catch (e) { this.showToast(e.message || 'Restore failed', 'error'); }
+                try {
+                    const p = this.cloud.restore.provider, u8 = await window.CloudBackup.download(p, f);
+                    if (!(await this.importBytes(u8, f.name, true))) return;
+                    this.cloud.restore.open = false;
+                    if (f.name === 'gowtham_tracker_latest.db') { window.CloudBackup.markSynced(p, f); if (p === 'ms') this.cloud.conflict = null; }
+                    else this.cloudSchedule(true);          // an older copy was chosen on purpose: it becomes the new latest
+                } catch (e) { this.showToast(e.message || 'Restore failed', 'error'); }
             },
             fmtWhen(iso) { if (!iso) return 'never'; const d = new Date(iso); return isNaN(d) ? 'never' : d.toLocaleString(); },
             clearAllData() {
                 if (!confirm('Delete ALL commitments, expense logs and events? This cannot be undone.\n\nTip: use "Export DB" first if you want a backup.')) return;
-                this.commitments = []; this.expenseLogs = []; this.events = []; this.selectedRowIds = []; this.rev++; clearTimeout(this._saveTimer);
+                this.commitments = []; this.expenseLogs = []; this.events = []; this.skips = []; this.selectedRowIds = []; this.rev++; clearTimeout(this._saveTimer);
                 try { C.writeSetting(db, 'dbName', ''); this.settings.dbName = ''; } catch (e) { }
                 if (this.persist({ toast: false })) { this.refreshView(); this.refreshEvents(); this.runLogQuery(); this.showToast('All data cleared.'); }
             }

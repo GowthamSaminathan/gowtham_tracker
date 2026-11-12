@@ -19,6 +19,8 @@
         events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeat: 'TEXT', budget: 'REAL', currency: 'TEXT', done: 'INTEGER', notes: 'TEXT' }
     };
     const V5_ADDED = { commitments: ['pausedMonth', 'archived'] };            // columns added by the v4 -> v5 upgrade
+    // "Not required this time": one row per skipped due date. Optional table (created when missing), so v5 files stay v5.
+    const SKIPS_DDL = 'CREATE TABLE IF NOT EXISTS skips (commitmentId INTEGER NOT NULL, commitmentDate TEXT NOT NULL, PRIMARY KEY (commitmentId, commitmentDate))';
     const SETTINGS_DDL = "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')";
     const NULLABLE = new Set(['dueDay', 'dueMonth', 'endDate', 'commitmentDate', 'commitmentId', 'pausedMonth']);
     const DEFAULTS = { region: 'UAE', currency: 'AED', frequency: 'Monthly', kind: 'Event', repeat: 'None' };
@@ -86,6 +88,14 @@
         return m;
     }
 
+    // Skipped ("not required this time") due dates: a Set of occKey(commitmentId, date). A real payment always wins over a skip.
+    const NO_SKIPS = new Set();
+    function buildSkipIndex(rows) {
+        const s = new Set();
+        (rows || []).forEach(r => { if (toInt(r.commitmentId) && validISO(r.commitmentDate)) s.add(occKey(Number(r.commitmentId), r.commitmentDate)); });
+        return s;
+    }
+
     /* Pause = "skip this month in the dashboard". It is stored as the month it applies to (YYYY-MM) and is only
      * active while that month is the current month, so it lapses by itself when the month rolls over.            */
     const pauseActive = (c, today) => isMonthKey(c.pausedMonth) && c.pausedMonth === monthKey(today);
@@ -99,33 +109,36 @@
      *  Completed : has an endDate and EVERY due date in start..end is paid (or the range has no due dates and has ended)
      *  Paused    : paused for the current month and this month still has an unpaid due date
      *  Paid      : nothing overdue and this month's due date(s) are all paid (cycle settled)
+     *  Skipped   : like Paid, but this month's due date was marked "not required this time" instead of being paid
      *  Pending   : everything else (active, something still to pay now or later)                                      */
-    function statusOf(c, paid, today) {
-        const base = { status: 'Pending', missed: [], next: '', paidCount: 0, total: 0, invalid: false, paused: false, pausedDue: [] };
+    function statusOf(c, paid, today, skips = NO_SKIPS) {
+        const base = { status: 'Pending', missed: [], next: '', paidCount: 0, skippedCount: 0, total: 0, invalid: false, paused: false, pausedDue: [] };
         if (!validISO(c.startDate) || (c.endDate && (!validISO(c.endDate) || c.endDate < c.startDate))) return { ...base, invalid: true, status: isArchived(c) ? 'Archived' : 'Pending' };
         const finite = validISO(c.endDate);
         const horizon = finite ? c.endDate : addDays(today, 400);
         const occ = occurrencesOf(c, c.startDate, horizon);
         const isPaid = d => paid.has(occKey(c.id, d));
+        const isSkipped = d => !isPaid(d) && skips.has(occKey(c.id, d));
+        const settled = d => isPaid(d) || isSkipped(d);              // nothing left to do for this due date
         const pz = pauseActive(c, today), skip = d => pz && monthKey(d) === c.pausedMonth;
-        const missed = occ.filter(d => d < today && !isPaid(d) && !skip(d));
-        const nextUnpaid = occ.find(d => d >= today && !isPaid(d) && !skip(d)) || '';
+        const missed = occ.filter(d => d < today && !settled(d) && !skip(d));
+        const nextUnpaid = occ.find(d => d >= today && !settled(d) && !skip(d)) || '';
         const thisMonth = occ.filter(d => monthKey(d) === monthKey(today));
-        const pausedDue = pz ? thisMonth.filter(d => !isPaid(d)) : [];
-        const r = { ...base, missed, next: missed[0] || nextUnpaid, paidCount: occ.filter(isPaid).length, total: finite ? occ.length : 0, paused: pz, pausedDue };
+        const pausedDue = pz ? thisMonth.filter(d => !settled(d)) : [];
+        const r = { ...base, missed, next: missed[0] || nextUnpaid, paidCount: occ.filter(isPaid).length, skippedCount: occ.filter(isSkipped).length, total: finite ? occ.length : 0, paused: pz, pausedDue };
         if (isArchived(c)) return { ...r, status: 'Archived' };
         if (today < c.startDate) return { ...r, status: 'Upcoming', next: occ.find(d => !skip(d)) || '' };
         if (missed.length) return { ...r, status: 'Overdue' };
-        if (finite && ((occ.length && occ.every(isPaid)) || (!occ.length && c.endDate < today))) return { ...r, status: 'Completed' };
+        if (finite && ((occ.length && occ.every(settled)) || (!occ.length && c.endDate < today))) return { ...r, status: 'Completed' };
         if (pausedDue.length) return { ...r, status: 'Paused' };
-        if (thisMonth.length && thisMonth.every(isPaid)) return { ...r, status: 'Paid' };
+        if (thisMonth.length && thisMonth.every(settled)) return { ...r, status: thisMonth.some(isPaid) ? 'Paid' : 'Skipped' };
         if (!thisMonth.length) return { ...r, status: 'Upcoming' };          // nothing due this month: next due date is in a later month
         return r;
     }
     // Which due date should "Mark paid" settle? oldest missed one, else this month's, else the next upcoming one.
     // A pause is ignored here: paying a paused commitment settles the paused due date (the app resumes it first).
-    function payTarget(c, paid, today) {
-        const s = statusOf({ ...c, pausedMonth: '', archived: 0 }, paid, today);
+    function payTarget(c, paid, today, skips = NO_SKIPS) {
+        const s = statusOf({ ...c, pausedMonth: '', archived: 0 }, paid, today, skips);
         if (s.invalid) return '';
         return s.missed[0] || s.next || '';
     }
@@ -185,21 +198,23 @@
     /* ------------------------------------------------------------------ analytics */
     // Archived commitments are skipped entirely. Unpaid due dates of a commitment paused for the current month are
     // left out of every total and returned separately (pausedOcc / pausedTotal) so the UI can say what was excluded.
-    function analyze(commitments, logs, win, today) {
-        const paid = buildPaidIndex(logs), occ = [], pausedOcc = [], pausedTotal = {};
+    // Due dates marked "not required this time" are treated the same way (skippedOcc / skippedTotal): never required, never overdue.
+    function analyze(commitments, logs, win, today, skips = NO_SKIPS) {
+        const paid = buildPaidIndex(logs), occ = [], pausedOcc = [], pausedTotal = {}, skippedOcc = [], skippedTotal = {};
         let archivedCount = 0;
         commitments.forEach(c => {
             if (isArchived(c)) { archivedCount++; return; }
             const pz = pauseActive(c, today);
             occurrencesOf(c, win.start, win.end).forEach(date => {
                 const log = paid.get(occKey(c.id, date)) || null;
-                const o = { c, id: c.id, date, paid: !!log, log, overdue: !log && date < today, currency: c.currency || 'AED', amount: toMoney(c.amount), month: monthKey(date), paused: false };
+                const o = { c, id: c.id, date, paid: !!log, log, overdue: !log && date < today, currency: c.currency || 'AED', amount: toMoney(c.amount), month: monthKey(date), paused: false, skipped: false };
+                if (!log && skips.has(occKey(c.id, date))) { o.skipped = true; o.overdue = false; skippedOcc.push(o); addTo(skippedTotal, o.currency, o.amount); return; }
                 if (pz && !log && o.month === c.pausedMonth) { o.paused = true; o.overdue = false; pausedOcc.push(o); addTo(pausedTotal, o.currency, o.amount); return; }
                 occ.push(o);
             });
         });
         const byDate = (a, b) => a.date.localeCompare(b.date) || String(a.c.name).localeCompare(String(b.c.name));
-        occ.sort(byDate); pausedOcc.sort(byDate);
+        occ.sort(byDate); pausedOcc.sort(byDate); skippedOcc.sort(byDate);
         const required = {}, paidBy = {}, outstanding = {}, overdue = {}, actual = {}, category = {};
         const perKey = new Map(win.months.map(m => [m.key, { key: m.key, label: m.label, required: {}, actual: {} }]));      // one pass, no per-month filtering
         occ.forEach(o => {
@@ -216,7 +231,7 @@
             addTo(actual, cur, amt); (category[k] = category[k] || {}); addTo(category[k], cur, amt);
             const pm = perKey.get(monthKey(l.actualDate)); if (pm) addTo(pm.actual, cur, amt);
         });
-        return { occ, pausedOcc, pausedTotal, archivedCount, required, paid: paidBy, outstanding, overdue, actual, category, perMonth: [...perKey.values()], logCount, paidCount: occ.filter(o => o.paid).length, overdueCount: occ.filter(o => o.overdue).length };
+        return { occ, pausedOcc, pausedTotal, skippedOcc, skippedTotal, archivedCount, required, paid: paidBy, outstanding, overdue, actual, category, perMonth: [...perKey.values()], logCount, paidCount: occ.filter(o => o.paid).length, overdueCount: occ.filter(o => o.overdue).length };
     }
     // Spend of ONE currency: window vs the equally long previous window.
     // One month -> cumulative daily line; several months -> one point per month. Single pass over the logs.
@@ -339,6 +354,7 @@
     function createSchema(db) {
         for (const [t, cols] of Object.entries(SCHEMA)) db.run(`CREATE TABLE IF NOT EXISTS ${t} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${Object.entries(cols).map(([c, ty]) => colDDL(c, ty)).join(', ')})`);
         db.run(SETTINGS_DDL);
+        db.run(SKIPS_DDL);
         INDEXES.forEach(s => db.run(s));
     }
     const INS = t => `INSERT INTO ${t} (id, ${Object.keys(SCHEMA[t]).join(', ')}) VALUES (${['?'].concat(Object.keys(SCHEMA[t]).map(() => '?')).join(', ')})`;
@@ -473,7 +489,7 @@
     root.Core = {
         SCHEMA_VERSION, SCHEMA, ENUMS, DEFAULTS, MONTH_NAMES, SORT_COLS, SETTINGS, BREAKDOWN_MODES,
         toInt, toMoney, addTo, pad2, isLeap, daysInMonth, iso, isISO, isMonthKey, ymd, validISO, todayISO, monthKey, monthStart, monthEnd, clampDay, addMonths, addDays, daysBetween, fmtDate,
-        occurrencesOf, occKey, buildPaidIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
+        occurrencesOf, occKey, buildPaidIndex, buildSkipIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
         buildLogQuery, queryAll, rowsOf, listTables, getVersion, createSchema, INS, UPSERT, dbValues, inTx, ensureSchema, readSettings, writeSetting,
         validateCommitment, validateLog, validateEvent
     };
