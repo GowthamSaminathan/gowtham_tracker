@@ -1,20 +1,20 @@
-# Gowtham Schedules & Pay
+# Tracker
 
 A private tracker for recurring payments, everyday expenses, events and tasks. It runs entirely in your browser: there is no account and no server, and your data stays on your device unless you turn on backup to your own OneDrive or Google Drive.
 
 - **Use it:** <https://tracker.gowthams.com>
 - **Try it with sample data:** <https://tracker.gowthams.com/?demo=1>
 
-Current version: 5.7.0
+Current version: 6.0.0
 
 ## What it does
 
 | Tab | What you do there |
 |---|---|
-| Dashboard | See what is required, paid, outstanding and overdue for any time window, per currency. Charts, "where the money goes", loan progress, upcoming events. Act on any due date directly. |
-| Pay Commitments | Your recurring payments: rent, loans, bills, subscriptions, insurance. Monthly, every two months, yearly or one-time. |
+| Dashboard | Pick a time window with one tap, then see every due date in it and act on it directly. Below that: events and tasks for the next 45 days, totals per currency, and charts. |
+| Pay Commitments | Your recurring payments: rent, loans, bills, subscriptions, insurance. Every N months or every N years (monthly, every 3 months, yearly, every 2 or 5 years…), or one-time. |
 | Expense Log | Everything actually spent. A payment for a commitment is a log row linked to that due date. |
-| Events & Tasks | Birthdays, renewals and to-dos, with optional yearly repeat and a budget. |
+| Events & Tasks | Days to remember (birthdays, renewals) and things to tick off (a daily lesson, a weekly call). Either can repeat every N days, weeks, months or years. |
 | Settings | Auto-save, theme, privacy mask, demo, export/import, cloud backup. |
 
 Amounts in different currencies are never added together; every total is shown per currency.
@@ -54,13 +54,19 @@ Status is worked out from the due dates and the linked payments; it is never sto
 | Completed | It has an end date and every due date is paid or marked not required. |
 | Archived | In the archive. |
 
+## Repeat intervals
+
+**Payments.** In the edit form, set *Repeats every* to a number and *months* or *years*: `1 month` is monthly, `3 months` is quarterly, `2 years` is every second year. For anything other than plain monthly you also pick the month it is first due; it repeats from there. The table on a computer offers the common intervals in one list and shows any other interval you set in the form. Intervals go up to 120.
+
+**Events and tasks.** Set *Repeats* to every N days, weeks, months or years, counted from the date you enter. An event always shows its next date. A task is ticked off for its current date and opens again by itself on the next one, so a daily task is due again every morning. A missed weekly or monthly task stays overdue until you tick it or its next date arrives.
+
 ## Privacy mask
 
 The eye button in the header (also in Settings → Privacy) hides amounts (`AED ••••`) and shows only the first letters of payment names (`Re••••`) in lists, totals and charts. It changes only how this device displays the data. Exports and backups keep the real values, and opening a row to edit it shows them.
 
 ## Demo
 
-The demo fills the app with invented sample data: about twenty commitments in three currencies, a year of payments, six months of everyday spending, and some events and tasks. It always shows a mix of paid, pending, overdue, paused and skipped items.
+The demo fills the app with invented sample data: about two dozen commitments in three currencies, a year of payments, six months of everyday spending, and events and repeating tasks. It always shows a mix of paid, pending, overdue, paused and skipped items.
 
 The demo lives in memory only. It is never saved in the browser and never backed up, and it does not touch your own data. Open it from Settings → Demo, with `?demo=1` on the address, or share that link with someone.
 
@@ -83,7 +89,7 @@ Backup is optional. It sends the saved database from your device straight to **y
 | Loads the newer copy when the app opens | Yes | No, use Restore |
 | Sign-in lasts | About a day | About an hour |
 
-What is kept in the drive: `gowtham_tracker_latest.db`, one dated copy per day for the last 14 days, and up to five "kept" copies made when one side replaced the other.
+What is kept in the drive: `gowtham_tracker_latest.db`, one dated copy per day for the last 14 days, and up to five "kept" copies made when one side replaced the other. (The file names in the drive are unchanged from earlier versions so existing backups keep working.)
 
 **How sync decides (OneDrive).** When the app opens or comes back to the front it compares this device with the drive:
 
@@ -129,19 +135,23 @@ If you host the app at another address, use that address in the steps above. The
 
 ## Data model
 
-Schema version 5 (`PRAGMA user_version = 5`). Version 4 files are upgraded when opened; older files are rejected and left unchanged.
+Schema version 6 (`PRAGMA user_version = 6`). Version 4 and 5 files are upgraded automatically when opened or imported, in one transaction; older files are rejected and left unchanged. A device still running an older app version cannot open a version 6 file until it reloads and updates.
 
 | Table | Holds |
 |---|---|
-| `commitments` | name, category, amount, currency, frequency, due day/month, start and end date, method, notes, paused month, archived flag |
+| `commitments` | name, category, amount, currency, frequency (`Monthly`, `Yearly`, `One-Time`), `every` (the interval), due day and month, start and end date, method, notes, paused month, archived flag |
 | `expense_logs` | actual date, description, category, amount, currency, method, notes, and the linked commitment and due date for payments |
-| `events` | title, kind (Event or Task), date, yearly repeat, budget, currency, done flag, notes |
-| `skips` | commitment and due date marked *not required*. Added in 5.7 and created automatically when missing |
+| `events` | title, kind (`Event` or `Task`), first date, `repeatUnit` (`None`, `Day`, `Week`, `Month`, `Year`), `repeatEvery`, `doneDate` (the date that was ticked off), notes |
+| `skips` | commitment and due date marked *not required* |
 | `settings` | auto-save, theme, last imported and exported file names |
 
 A payment is an `expense_logs` row with a `commitmentId` and a `commitmentDate`. That pair identifies the exact due date it settles.
 
-Validation rules: amounts are numbers above 0 rounded to two decimals; due day is 1–31 and is clamped to shorter months; a one-time commitment needs a due date; a linked payment must point at a real due date of its commitment.
+What changed from version 5: "Bi-Monthly" became `Monthly` with `every = 2` (same due dates); events gained the repeat interval and lost the budget (an existing budget is kept as a line in the notes); the unused `region` column was removed; ids are plain integer keys; two indexes that were never used were dropped.
+
+Validation rules: amounts are numbers above 0 rounded to two decimals; due day is 1–31 and is clamped to shorter months; a one-time commitment needs a due date; a linked payment must point at a real due date of its commitment; repeat intervals are 1–120.
+
+The database is small by design: a few hundred bytes per row, so many years of use stay far below the browser's storage limit.
 
 ## Project layout
 
@@ -156,7 +166,7 @@ Validation rules: amounts are numbers above 0 rounded to two decimals; due day i
 | `oauth.html` | Landing page of the OneDrive sign-in window |
 | `sw.js`, `manifest.webmanifest`, `assets/icons/` | Offline cache and install-as-app |
 | `assets/css/`, `assets/webfonts/` | Compiled Tailwind CSS and Font Awesome icons |
-| `assets/js/alpine.min.js`, `chart.umd.js`, `sql-wasm*.js` | Bundled libraries: Alpine.js 3.14.1, Chart.js, sql.js 1.12.0 |
+| `assets/js/alpine.min.js`, `chart.umd.js`, `sql-wasm*.js` | Bundled libraries: Alpine.js 3.14.1, Chart.js, sql.js 1.12.0. `alpine.min.js` carries one local change: a guard in `x-for` so a list that was removed in the same update is skipped instead of raising an error |
 | `assets/licenses/` | Licences of the bundled libraries |
 | `build-css/` | Rebuilds the CSS when new Tailwind classes are used |
 
@@ -174,8 +184,11 @@ npm run build
 
 When releasing, change the version in three places so browsers and installed apps pick up the new files: `appVersion` in `assets/js/app.js`, `VERSION` in `sw.js`, and the `?v=` tags in `index.html`.
 
+`assets/js/core.js` has no screen code and can be loaded in Node together with the bundled sql.js to test date rules or upgrade a database file outside the browser.
+
 ## Recent changes
 
+- **6.0** New name. Payments every N months or years. Events and tasks repeat every N days, weeks, months or years, and tasks re-open by themselves; event budgets removed. One-tap time window; due dates first on the dashboard; plainer chart wording. Database format 6.
 - **5.7** Privacy mask; pay, pause, skip and archive from the dashboard; "not required this time"; demo with sample data; safer cloud sync (a device never replaces a drive copy it has not seen); layout fixes for small and mid-size screens.
 - **5.6** Backup status in the header; upload straight after Save.
 - **5.5** OneDrive sign-in on open, automatic load of the newer copy.

@@ -1,7 +1,7 @@
 {
-  "name": "Gowtham Schedules & Expense Tracker",
+  "name": "Tracker",
   "short_name": "Tracker",
-  "description": "Offline schedules and expense tracker. Data stays on your device; optional private backup to your own Google Drive / OneDrive.",
+  "description": "Recurring payments, expenses, events and tasks. Works offline; data stays on your device, with optional private backup to your own OneDrive or Google Drive.",
   "id": "/",
   "start_url": "./index.html",
   "scope": "./",

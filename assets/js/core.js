@@ -3,34 +3,47 @@
  *  - occurrence generation + derived status for payment commitments (based on startDate / endDate)
  *  - dashboard time windows + analytics
  *  - SQL builder for the Expense Log (filter / multi-column sort / pagination)
- *  - schema v5 (v4 files are upgraded in place by adding the pause/archive columns and the settings table;
- *    anything older is rejected with a clear message)
+ *  - schema v6 (v4 and v5 files are upgraded when opened: tables are rebuilt without the unused columns, "Bi-Monthly"
+ *    becomes "Monthly, every 2", events get a repeat interval; anything older is rejected with a clear message)
  *  - settings (key/value, validated)
  *  - validation
  */
 (function (root) {
     'use strict';
-    const SCHEMA_VERSION = 5;
+    const SCHEMA_VERSION = 6;
 
     /* ------------------------------------------------------------------ schema */
+    /* v6 changes (all applied by migrateToV6 when an older file is opened):
+     *  - commitments.every        : repeat interval. Monthly + every 2 = every 2 months, Yearly + every 5 = every 5 years.
+     *                               "Bi-Monthly" no longer exists (it is Monthly, every 2).
+     *  - events.repeatUnit/Every  : None | Day | Week | Month | Year, every N. events.doneDate = the occurrence that was
+     *                               ticked off (so a repeating task re-opens by itself for its next date).
+     *  - removed                  : region (commitments, expense_logs) and budget / currency / done / repeat (events).
+     *  - ids are plain INTEGER PRIMARY KEY (the app assigns them), so SQLite no longer keeps a sequence table. */
     const SCHEMA = {
-        commitments:  { name: 'TEXT', region: 'TEXT', category: 'TEXT', amount: 'REAL', currency: 'TEXT', frequency: 'TEXT', dueDay: 'INTEGER', dueMonth: 'INTEGER', startDate: 'TEXT', endDate: 'TEXT', method: 'TEXT', notes: 'TEXT', pausedMonth: 'TEXT', archived: 'INTEGER' },
-        expense_logs: { actualDate: 'TEXT', commitmentDate: 'TEXT', commitmentId: 'INTEGER', region: 'TEXT', category: 'TEXT', item: 'TEXT', amount: 'REAL', currency: 'TEXT', method: 'TEXT', notes: 'TEXT' },
-        events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeat: 'TEXT', budget: 'REAL', currency: 'TEXT', done: 'INTEGER', notes: 'TEXT' }
+        commitments:  { name: 'TEXT', category: 'TEXT', amount: 'REAL', currency: 'TEXT', frequency: 'TEXT', every: 'INTEGER', dueDay: 'INTEGER', dueMonth: 'INTEGER', startDate: 'TEXT', endDate: 'TEXT', method: 'TEXT', notes: 'TEXT', pausedMonth: 'TEXT', archived: 'INTEGER' },
+        expense_logs: { actualDate: 'TEXT', commitmentDate: 'TEXT', commitmentId: 'INTEGER', category: 'TEXT', item: 'TEXT', amount: 'REAL', currency: 'TEXT', method: 'TEXT', notes: 'TEXT' },
+        events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeatUnit: 'TEXT', repeatEvery: 'INTEGER', doneDate: 'TEXT', notes: 'TEXT' }
     };
-    const V5_ADDED = { commitments: ['pausedMonth', 'archived'] };            // columns added by the v4 -> v5 upgrade
-    // "Not required this time": one row per skipped due date. Optional table (created when missing), so v5 files stay v5.
-    const SKIPS_DDL = 'CREATE TABLE IF NOT EXISTS skips (commitmentId INTEGER NOT NULL, commitmentDate TEXT NOT NULL, PRIMARY KEY (commitmentId, commitmentDate))';
-    const SETTINGS_DDL = "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')";
-    const NULLABLE = new Set(['dueDay', 'dueMonth', 'endDate', 'commitmentDate', 'commitmentId', 'pausedMonth']);
-    const DEFAULTS = { region: 'UAE', currency: 'AED', frequency: 'Monthly', kind: 'Event', repeat: 'None' };
-    const ENUMS = { frequency: ['Monthly', 'Bi-Monthly', 'Yearly', 'One-Time'], kind: ['Event', 'Task'], repeat: ['None', 'Yearly'] };
+    // What a v4 / v5 file must contain before it can be upgraded (v4 lacks the two pause / archive columns).
+    const OLD_SCHEMA = {
+        commitments:  ['name', 'category', 'amount', 'currency', 'frequency', 'dueDay', 'dueMonth', 'startDate', 'endDate', 'method', 'notes'],
+        expense_logs: ['actualDate', 'commitmentDate', 'commitmentId', 'category', 'item', 'amount', 'currency', 'method', 'notes'],
+        events:       ['title', 'kind', 'eventDate', 'repeat', 'budget', 'currency', 'done', 'notes']
+    };
+    // "Not required this time": one row per skipped due date.
+    const SKIPS_DDL = 'CREATE TABLE IF NOT EXISTS skips (commitmentId INTEGER NOT NULL, commitmentDate TEXT NOT NULL, PRIMARY KEY (commitmentId, commitmentDate)) WITHOUT ROWID';
+    const SETTINGS_DDL = "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '') WITHOUT ROWID";
+    const NULLABLE = new Set(['dueDay', 'dueMonth', 'endDate', 'commitmentDate', 'commitmentId', 'pausedMonth', 'doneDate']);
+    const DEFAULTS = { currency: 'AED', frequency: 'Monthly', kind: 'Event', repeatUnit: 'None', every: 1, repeatEvery: 1 };
+    const ENUMS = { frequency: ['Monthly', 'Yearly', 'One-Time'], kind: ['Event', 'Task'], repeatUnit: ['None', 'Day', 'Week', 'Month', 'Year'] };
+    const MAX_EVERY = 120;                                                    // longest repeat interval (months, years, days or weeks)
+    // Only the Expense Log is queried with SQL; commitments and events are small and read whole, so they need no index.
     const INDEXES = [
         'CREATE INDEX IF NOT EXISTS idx_logs_actual ON expense_logs(actualDate)',
-        'CREATE INDEX IF NOT EXISTS idx_logs_commitment ON expense_logs(commitmentId, commitmentDate)',
-        'CREATE INDEX IF NOT EXISTS idx_commitments_dates ON commitments(startDate, endDate)',
-        'CREATE INDEX IF NOT EXISTS idx_events_date ON events(eventDate)'
+        'CREATE INDEX IF NOT EXISTS idx_logs_commitment ON expense_logs(commitmentId, commitmentDate)'
     ];
+    const OLD_INDEXES = ['idx_commitments_dates', 'idx_events_date'];
     const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     /* ------------------------------------------------------------------ numbers */
@@ -66,19 +79,34 @@
         const hi = (hasEnd && c.endDate < to) ? c.endDate : to;
         if (lo > hi) return [];
         if (c.frequency === 'One-Time') return (hasEnd && c.endDate >= lo && c.endDate <= hi) ? [c.endDate] : [];   // endDate IS the due date
-        const day = toInt(c.dueDay), mon = toInt(c.dueMonth);
+        const day = toInt(c.dueDay), mon = toInt(c.dueMonth), every = everyOf(c);
         if (!(day >= 1 && day <= 31)) return [];
-        if (c.frequency === 'Yearly' && !(mon >= 1 && mon <= 12)) return [];
-        const anchor = c.frequency === 'Bi-Monthly' ? ((mon >= 1 && mon <= 12) ? mon : ymd(c.startDate)[1]) : 0;
+        const hasMon = mon >= 1 && mon <= 12, [sy, sm] = ymd(c.startDate);
+        let step, anchor;                                                  // due in months t where (t - anchor) is a multiple of step
+        if (c.frequency === 'Yearly') {
+            if (!hasMon) return [];
+            const first = iso(sy, mon, clampDay(sy, mon, day)) >= c.startDate ? sy : sy + 1;      // year of the first due date
+            step = 12 * every; anchor = first * 12 + mon - 1;
+        } else {                                                           // Monthly: every month, or every N months counted from dueMonth (else the start month)
+            step = every; anchor = sy * 12 + (every > 1 && hasMon ? mon : sm) - 1;
+        }
         const [ly, lm] = ymd(lo), [hy, hm] = ymd(hi), out = [];
-        for (let t = ly * 12 + lm - 1, last = hy * 12 + hm - 1; t <= last && out.length < 1200; t++) {
+        let t = ly * 12 + lm - 1; const last = hy * 12 + hm - 1;
+        t += ((anchor - t) % step + step) % step;                         // first matching month at or after the range start
+        for (; t <= last && out.length < 1200; t += step) {
             const y = Math.floor(t / 12), m = (t % 12) + 1;
-            if (c.frequency === 'Yearly' && m !== mon) continue;
-            if (c.frequency === 'Bi-Monthly' && (((m - anchor) % 2) + 2) % 2 !== 0) continue;
             const d = iso(y, m, clampDay(y, m, day));
             if (d >= lo && d <= hi) out.push(d);
         }
         return out;
+    }
+    // Repeat interval of a commitment (1 = every month / every year).
+    const everyOf = c => { const n = toInt(c.every); return n >= 1 && n <= MAX_EVERY ? n : 1; };
+    // "Monthly", "Every 2 months", "Yearly", "Every 5 years", "One-Time"
+    function frequencyLabel(c) {
+        if (c.frequency === 'One-Time') return 'One-Time';
+        const n = everyOf(c), yearly = c.frequency === 'Yearly';
+        return n === 1 ? (yearly ? 'Yearly' : 'Monthly') : `Every ${n} ${yearly ? 'years' : 'months'}`;
     }
     const occKey = (id, date) => `${id}|${date}`;
     // A payment = expense-log row linked to (commitmentId, commitmentDate). That pair identifies the occurrence it settles.
@@ -115,7 +143,8 @@
         const base = { status: 'Pending', missed: [], next: '', paidCount: 0, skippedCount: 0, total: 0, invalid: false, paused: false, pausedDue: [] };
         if (!validISO(c.startDate) || (c.endDate && (!validISO(c.endDate) || c.endDate < c.startDate))) return { ...base, invalid: true, status: isArchived(c) ? 'Archived' : 'Pending' };
         const finite = validISO(c.endDate);
-        const horizon = finite ? c.endDate : addDays(today, 400);
+        // ongoing: look far enough ahead to reach the next due date even for "every 5 years"
+        const horizon = finite ? c.endDate : addDays(today, Math.max(400, everyOf(c) * (c.frequency === 'Yearly' ? 366 : 31) + 40));
         const occ = occurrencesOf(c, c.startDate, horizon);
         const isPaid = d => paid.has(occKey(c.id, d));
         const isSkipped = d => !isPaid(d) && skips.has(occKey(c.id, d));
@@ -296,26 +325,59 @@
     }
 
     /* ------------------------------------------------------------------ events */
+    /* An event / task has a first date and an optional repeat: every N days, weeks, months or years.
+     * Month and year repeats keep the day of the first date (31st -> last day of shorter months, 29 Feb -> 28 Feb). */
+    const repeatOf = e => ENUMS.repeatUnit.includes(e.repeatUnit) && e.repeatUnit !== 'None' ? e.repeatUnit : '';
+    const repeatEvery = e => { const n = toInt(e.repeatEvery); return n >= 1 && n <= MAX_EVERY ? n : 1; };
+    function eventOccurrence(e, k) {                    // k-th date of the series (0 = the first date)
+        const unit = repeatOf(e), n = repeatEvery(e) * k;
+        if (!unit || !k) return e.eventDate;
+        if (unit === 'Day') return addDays(e.eventDate, n);
+        if (unit === 'Week') return addDays(e.eventDate, 7 * n);
+        const [y, m, d] = ymd(e.eventDate), [yy, mm] = addMonths(y, m, unit === 'Year' ? 12 * n : n);
+        return iso(yy, mm, clampDay(yy, mm, d));
+    }
+    // cur  = the date this event / task is "about" now: its latest date up to today (the first date while that is still ahead)
+    // next = the date after cur ('' when it does not repeat)
+    function eventDates(e, today) {
+        if (!validISO(e.eventDate)) return { cur: '', next: '' };
+        const unit = repeatOf(e);
+        if (!unit || e.eventDate >= today) return { cur: e.eventDate, next: unit ? eventOccurrence(e, 1) : '' };
+        const n = repeatEvery(e), days = daysBetween(e.eventDate, today), [y, m] = ymd(e.eventDate), [ty, tm] = ymd(today);
+        let k = unit === 'Day' ? Math.floor(days / n) : unit === 'Week' ? Math.floor(days / (7 * n)) : Math.floor(((ty * 12 + tm) - (y * 12 + m)) / (unit === 'Year' ? 12 * n : n));
+        while (k > 0 && eventOccurrence(e, k) > today) k--;                 // month / year estimate can be one step ahead
+        while (eventOccurrence(e, k + 1) <= today) k++;
+        return { cur: eventOccurrence(e, k), next: eventOccurrence(e, k + 1) };
+    }
+    // A task is done when its current date was ticked off. A repeating task re-opens by itself when its next date arrives.
+    function eventDone(e, today) {
+        if (e.kind !== 'Task' || !validISO(e.doneDate)) return false;
+        return !repeatOf(e) || e.doneDate >= eventDates(e, today).cur;
+    }
+    // The date to show: the coming one for events, the open one for tasks (the next one once the current is done).
     function nextEventDate(e, today) {
-        if (!validISO(e.eventDate)) return '';
-        if (e.repeat !== 'Yearly') return e.eventDate;
-        const [, m, d] = ymd(e.eventDate), [ty] = ymd(today);
-        let c = iso(ty, m, clampDay(ty, m, d));
-        if (c < today) c = iso(ty + 1, m, clampDay(ty + 1, m, d));
-        return c;
+        const { cur, next } = eventDates(e, today);
+        if (!cur) return '';
+        if (e.kind === 'Task') return eventDone(e, today) && next ? next : cur;
+        return cur >= today || !next ? cur : next;
     }
     function eventState(e, today) {
         const n = nextEventDate(e, today);
-        if (e.kind === 'Task') return e.done ? 'Done' : (n && n < today ? 'Overdue' : n === today ? 'Due today' : 'Open');
+        if (e.kind === 'Task') return eventDone(e, today) ? 'Done' : (n && n < today ? 'Overdue' : n === today ? 'Due today' : 'Open');
         if (!n) return 'No date';
         return n === today ? 'Today' : (n < today ? 'Past' : 'Upcoming');
+    }
+    // "Does not repeat", "Every day", "Every 2 weeks", "Every year"
+    function repeatLabel(e) {
+        const unit = repeatOf(e), n = repeatEvery(e);
+        return !unit ? 'Does not repeat' : n === 1 ? 'Every ' + unit.toLowerCase() : `Every ${n} ${unit.toLowerCase()}s`;
     }
 
     /* ------------------------------------------------------------------ Expense-log SQL (parameterised) */
     const escLike = s => String(s).replace(/[\\%_]/g, '\\$&');
     const SORT_COLS = {
         actualDate: 'actualDate', commitmentDate: '(commitmentDate IS NULL), commitmentDate', item: 'item COLLATE NOCASE',
-        category: 'category COLLATE NOCASE', region: 'region', amount: 'amount', currency: 'currency', method: 'method COLLATE NOCASE', linked: '(commitmentId IS NULL)'
+        category: 'category COLLATE NOCASE', amount: 'amount', currency: 'currency', method: 'method COLLATE NOCASE', linked: '(commitmentId IS NULL)'
     };
     function buildLogQuery(f = {}, sorts = [], page = {}) {
         const w = [], p = [], eq = (col, v) => { if (v && v !== 'All') { w.push(`${col} = ?`); p.push(v); } };
@@ -324,7 +386,7 @@
         if (validISO(f.actualTo)) { w.push('actualDate <= ?'); p.push(f.actualTo); }
         if (validISO(f.commitFrom)) { w.push('commitmentDate >= ?'); p.push(f.commitFrom); }
         if (validISO(f.commitTo)) { w.push('commitmentDate <= ?'); p.push(f.commitTo); }
-        eq('category', f.category); eq('region', f.region); eq('currency', f.currency); eq('method', f.method);
+        eq('category', f.category); eq('currency', f.currency); eq('method', f.method);
         if (f.link === 'linked') w.push('commitmentId IS NOT NULL'); else if (f.link === 'unlinked') w.push('commitmentId IS NULL');
         if (f.minAmt !== '' && f.minAmt != null && Number.isFinite(Number(f.minAmt))) { w.push('amount >= ?'); p.push(Number(f.minAmt)); }
         if (f.maxAmt !== '' && f.maxAmt != null && Number.isFinite(Number(f.maxAmt))) { w.push('amount <= ?'); p.push(Number(f.maxAmt)); }
@@ -350,11 +412,41 @@
     const rowsOf = (db, sql) => { const r = db.exec(sql); return r.length ? r[0].values.map(v => Object.fromEntries(r[0].columns.map((c, i) => [c, v[i]]))) : []; };
     const listTables = db => rowsOf(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map(r => r.name);
     const getVersion = db => Number(rowsOf(db, 'PRAGMA user_version')[0].user_version) || 0;
-    const colDDL = (c, ty) => `${c} ${ty}` + (NULLABLE.has(c) ? '' : ` NOT NULL DEFAULT ${ty === 'TEXT' ? `'${DEFAULTS[c] ?? ''}'` : 0}`);
+    const colDDL = (c, ty) => `${c} ${ty}` + (NULLABLE.has(c) ? '' : ` NOT NULL DEFAULT ${ty === 'TEXT' ? `'${DEFAULTS[c] ?? ''}'` : (DEFAULTS[c] ?? 0)}`);
+    const tableDDL = t => `CREATE TABLE IF NOT EXISTS ${t} (id INTEGER PRIMARY KEY, ${Object.entries(SCHEMA[t]).map(([c, ty]) => colDDL(c, ty)).join(', ')})`;
     function createSchema(db) {
-        for (const [t, cols] of Object.entries(SCHEMA)) db.run(`CREATE TABLE IF NOT EXISTS ${t} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${Object.entries(cols).map(([c, ty]) => colDDL(c, ty)).join(', ')})`);
+        Object.keys(SCHEMA).forEach(t => db.run(tableDDL(t)));
         db.run(SETTINGS_DDL);
         db.run(SKIPS_DDL);
+        INDEXES.forEach(s => db.run(s));
+    }
+    /* v4 / v5 -> v6. Every table is rebuilt in the new shape and the rows are copied across, so nothing is lost:
+     *  - Bi-Monthly -> Monthly, every 2 (same due dates: it keeps counting from the same first month)
+     *  - a Yearly event -> repeats every 1 year; a done task -> done on its date
+     *  - an event budget is kept as a line in its notes ("Budget: AED 500.00"); region is dropped (currency already tells)
+     * Runs inside the caller's transaction; the caller sets user_version. */
+    function migrateToV6(db) {
+        const cols = t => rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name), has = (t, c) => cols(t).includes(c);
+        const tables = listTables(db);
+        OLD_INDEXES.concat(['idx_logs_actual', 'idx_logs_commitment']).forEach(i => db.run(`DROP INDEX IF EXISTS ${i}`));
+        const rebuild = (t, select) => {
+            db.run(`ALTER TABLE ${t} RENAME TO ${t}_old`);
+            db.run(tableDDL(t));
+            db.run(`INSERT INTO ${t} (id, ${Object.keys(SCHEMA[t]).join(', ')}) SELECT id, ${select} FROM ${t}_old`);
+            db.run(`DROP TABLE ${t}_old`);
+        };
+        rebuild('commitments', `name, category, amount, currency, CASE frequency WHEN 'Bi-Monthly' THEN 'Monthly' ELSE frequency END, CASE frequency WHEN 'Bi-Monthly' THEN 2 ELSE 1 END,
+            dueDay, dueMonth, startDate, endDate, method, notes, ${has('commitments', 'pausedMonth') ? 'pausedMonth' : 'NULL'}, ${has('commitments', 'archived') ? 'archived' : '0'}`);
+        rebuild('expense_logs', 'actualDate, commitmentDate, commitmentId, category, item, amount, currency, method, notes');
+        rebuild('events', `title, kind, eventDate, CASE repeat WHEN 'Yearly' THEN 'Year' ELSE 'None' END, 1, CASE WHEN done <> 0 THEN eventDate END,
+            CASE WHEN budget > 0 THEN trim(notes || char(10) || 'Budget: ' || currency || ' ' || printf('%.2f', budget), char(10)) ELSE notes END`);
+        // settings and skips: same content, rebuilt as compact WITHOUT ROWID tables
+        [['settings', SETTINGS_DDL, 'key, value'], ['skips', SKIPS_DDL, 'commitmentId, commitmentDate']].forEach(([t, ddl, c]) => {
+            if (!tables.includes(t)) { db.run(ddl); return; }
+            db.run(`ALTER TABLE ${t} RENAME TO ${t}_old`); db.run(ddl);
+            db.run(`INSERT OR IGNORE INTO ${t} (${c}) SELECT ${c} FROM ${t}_old`); db.run(`DROP TABLE ${t}_old`);
+        });
+        db.run('DELETE FROM skips WHERE commitmentId NOT IN (SELECT id FROM commitments)');
         INDEXES.forEach(s => db.run(s));
     }
     const INS = t => `INSERT INTO ${t} (id, ${Object.keys(SCHEMA[t]).join(', ')}) VALUES (${['?'].concat(Object.keys(SCHEMA[t]).map(() => '?')).join(', ')})`;
@@ -366,13 +458,16 @@
             let v = r[c];
             if (ty === 'REAL') v = Math.max(0, toMoney(v));
             else if (ty === 'INTEGER') {
-                v = (c === 'done' || c === 'archived') ? (Number(v) ? 1 : 0) : toInt(v);
+                v = c === 'archived' ? (Number(v) ? 1 : 0) : toInt(v);
+                if ((c === 'every' || c === 'repeatEvery') && !(v >= 1 && v <= MAX_EVERY)) v = 1;
                 if (c === 'dueDay' && !(v >= 1 && v <= 31)) v = null;
                 if (c === 'dueMonth' && !(v >= 1 && v <= 12)) v = null;
                 if (c === 'commitmentId' && !(v > 0)) v = null;
             } else {
                 v = (v === null || v === undefined) ? '' : String(v);
                 if (c === 'pausedMonth' && !isMonthKey(v)) v = '';
+                if (c === 'doneDate' && !validISO(v)) v = '';
+                if (c === 'frequency' && v === 'Bi-Monthly') v = 'Monthly';          // pre-v6 name; the caller sets every = 2
                 if (ENUMS[c] && !ENUMS[c].includes(v)) v = DEFAULTS[c];
                 if (NULLABLE.has(c) && v === '') v = null;
                 else if (v === '' && DEFAULTS[c] && c !== 'category') v = DEFAULTS[c];
@@ -383,35 +478,28 @@
     }
     function inTx(db, fn) { db.run('BEGIN'); try { const r = fn(); db.run('COMMIT'); return r; } catch (e) { try { db.run('ROLLBACK'); } catch (_) { } throw e; } }
 
-    // Opens a tracker database. Empty -> fresh v5. v5 -> checked. v4 -> checked, then upgraded in place (two columns + settings
-    // table, nothing is rewritten or removed). Older / newer / damaged files are rejected and NOT changed.
+    // Opens a tracker database. Empty -> fresh v6. v6 -> checked. v4 / v5 -> checked, then upgraded in one transaction
+    // (see migrateToV6). Older / newer / damaged files are rejected and NOT changed.
     function ensureSchema(db) {
         const ver = getVersion(db), tables = listTables(db), fail = (code, msg) => { const e = new Error(msg); e.code = code; return e; };
-        if (ver > SCHEMA_VERSION) throw fail('NEWER_SCHEMA', `This database was created by a newer app version (schema ${ver}).`);
-        const check = v => {
-            for (const [t, cols] of Object.entries(SCHEMA)) {
+        if (ver > SCHEMA_VERSION) throw fail('NEWER_SCHEMA', `This database was created by a newer app version (schema ${ver}). Reload the app to update it, then try again.`);
+        const check = (need, v) => {
+            for (const [t, cols] of Object.entries(need)) {
                 if (!tables.includes(t)) throw fail('BAD_SCHEMA', `This v${v} database is missing the "${t}" table.`);
                 const have = rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name);
-                const miss = Object.keys(cols).filter(c => !have.includes(c) && (v >= 5 || !(V5_ADDED[t] || []).includes(c)));
+                const miss = cols.filter(c => !have.includes(c));
                 if (miss.length) throw fail('BAD_SCHEMA', `Table "${t}" is missing column(s): ${miss.join(', ')}.`);
             }
         };
         if (ver === SCHEMA_VERSION) {
-            check(SCHEMA_VERSION);
-            createSchema(db);                                    // only adds the settings table / indexes if they are missing
+            check(Object.fromEntries(Object.entries(SCHEMA).map(([t, c]) => [t, Object.keys(c)])), ver);
+            createSchema(db);                                    // only adds the settings / skips tables and indexes if they are missing
             return { fresh: false };
         }
-        if (ver === 4) {
-            check(4);
-            inTx(db, () => {
-                for (const [t, cols] of Object.entries(V5_ADDED)) {
-                    const have = rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name);
-                    cols.filter(c => !have.includes(c)).forEach(c => db.run(`ALTER TABLE ${t} ADD COLUMN ${colDDL(c, SCHEMA[t][c])}`));
-                }
-                createSchema(db);
-                db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-            });
-            return { fresh: false, upgradedFrom: 4 };
+        if (ver === 4 || ver === 5) {
+            check(OLD_SCHEMA, ver);
+            inTx(db, () => { migrateToV6(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); });
+            return { fresh: false, upgradedFrom: ver };
         }
         if (!tables.length) { inTx(db, () => { createSchema(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); }); return { fresh: true }; }
         throw fail('OLD_SCHEMA', `This database is from an older version (schema ${ver}). Older files are no longer converted - open it once in the v4.0 build, export it, and import that file here.`);
@@ -439,6 +527,7 @@
 
     /* ------------------------------------------------------------------ validation (returns {field: message}) */
     const money = v => !(v === '' || v === null || v === undefined) && Number.isFinite(Number(v));
+    const needsDueMonth = o => o.frequency === 'Yearly' || (o.frequency === 'Monthly' && toInt(o.every) > 1);
     function validateCommitment(o) {
         const e = {};
         if (!String(o.name || '').trim()) e.name = 'Name is required'; else if (String(o.name).length > 100) e.name = 'Name is too long (max 100)';
@@ -448,13 +537,14 @@
         const hasEnd = !(o.endDate === '' || o.endDate === null || o.endDate === undefined);
         if (hasEnd && !validISO(o.endDate)) e.endDate = 'Select a valid end date';
         else if (hasEnd && validISO(o.startDate) && o.endDate < o.startDate) e.endDate = 'End date must be on/after the start date';
-        const day = toInt(o.dueDay), mon = toInt(o.dueMonth);
+        const day = toInt(o.dueDay), mon = toInt(o.dueMonth), every = toInt(o.every ?? 1);
         if (o.frequency === 'One-Time') { if (!hasEnd) e.endDate = e.endDate || 'Due date is required'; }
         else {
+            if (every === null || every < 1 || every > MAX_EVERY) e.every = `Repeat interval must be 1-${MAX_EVERY}`;
             if (day === null || day < 1 || day > 31) e.dueDay = 'Select a due day (1-31)';
-            if (o.frequency !== 'Monthly') {
+            if (needsDueMonth(o)) {                              // yearly, or every N months: the month it is first due
                 if (mon === null || mon < 1 || mon > 12) e.dueMonth = 'Select a month';
-                else if (day !== null && day > daysInMonth(2024, mon)) e.dueDay = 'This month has fewer days';
+                else if (o.frequency === 'Yearly' && day !== null && day > daysInMonth(2024, mon)) e.dueDay = 'This month has fewer days';
             }
         }
         if (!e.endDate && !e.startDate && !e.dueDay && !e.dueMonth && o.frequency !== 'One-Time' && validISO(o.startDate) && hasEnd && !occurrencesOf(o, o.startDate, o.endDate).length) e.endDate = 'No due date falls between start and end';
@@ -481,15 +571,15 @@
         if (!String(o.title || '').trim()) e.title = 'Title is required';
         if (!ENUMS.kind.includes(o.kind)) e.kind = 'Choose Event or Task';
         if (!validISO(o.eventDate)) e.eventDate = 'Select a valid date';
-        if (!ENUMS.repeat.includes(o.repeat)) e.repeat = 'Invalid repeat';
-        if (o.budget !== '' && o.budget != null && (!Number.isFinite(Number(o.budget)) || Number(o.budget) < 0)) e.budget = 'Budget must be 0 or more';
+        if (!ENUMS.repeatUnit.includes(o.repeatUnit)) e.repeatUnit = 'Choose how it repeats';
+        else if (o.repeatUnit !== 'None') { const n = toInt(o.repeatEvery ?? 1); if (n === null || n < 1 || n > MAX_EVERY) e.repeatEvery = `Repeat interval must be 1-${MAX_EVERY}`; }
         return e;
     }
 
     root.Core = {
-        SCHEMA_VERSION, SCHEMA, ENUMS, DEFAULTS, MONTH_NAMES, SORT_COLS, SETTINGS, BREAKDOWN_MODES,
+        SCHEMA_VERSION, SCHEMA, ENUMS, DEFAULTS, MAX_EVERY, MONTH_NAMES, SORT_COLS, SETTINGS, BREAKDOWN_MODES,
         toInt, toMoney, addTo, pad2, isLeap, daysInMonth, iso, isISO, isMonthKey, ymd, validISO, todayISO, monthKey, monthStart, monthEnd, clampDay, addMonths, addDays, daysBetween, fmtDate,
-        occurrencesOf, occKey, buildPaidIndex, buildSkipIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
+        occurrencesOf, everyOf, frequencyLabel, needsDueMonth, eventDates, eventDone, eventOccurrence, repeatLabel, occKey, buildPaidIndex, buildSkipIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
         buildLogQuery, queryAll, rowsOf, listTables, getVersion, createSchema, INS, UPSERT, dbValues, inTx, ensureSchema, readSettings, writeSetting,
         validateCommitment, validateLog, validateEvent
     };

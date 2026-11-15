@@ -6,3 +6,6 @@ build-css/package-lock.json
 *.sqlite
 *.sqlite3
 gowtham_export_*.csv
+
+# exports (new file names)
+tracker_export_*.csv

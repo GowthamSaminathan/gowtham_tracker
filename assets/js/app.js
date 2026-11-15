@@ -92,7 +92,7 @@
     window.trackerApp = function () {
         const t0 = C.todayISO(), [y0, m0] = C.ymd(t0);
         return {
-            tab: 'dashboard', monthNames: C.MONTH_NAMES, frequencies: C.ENUMS.frequency, regions: ['UAE', 'India', 'Global'],
+            tab: 'dashboard', monthNames: C.MONTH_NAMES, frequencies: C.ENUMS.frequency, repeatUnits: C.ENUMS.repeatUnit,
             currencies: ['AED', 'INR', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'SAR', 'QAR'],
             categories: ['Utilities', 'EMI / Loan', 'Savings', 'Subscriptions', 'Insurance', 'Rent', 'Groceries', 'Travel', 'Health', 'Other'],
             methods: ['Cash', 'Card', 'Credit card', 'Bank Transfer', 'Auto-debit', 'UPI'],
@@ -105,7 +105,7 @@
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '5.7.0',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '6.0.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
@@ -166,11 +166,11 @@
                     const raw = this.demo ? null : store.get(LS_KEY);
                     let opened = false;
                     if (raw) {
-                        try { db = new SQL.Database(fromB64(raw)); if (C.ensureSchema(db).upgradedFrom) this.showToast('Your data was upgraded to the v5 format (pause / archive / settings). Nothing was removed.', 'info'); opened = true; }
+                        try { db = new SQL.Database(fromB64(raw)); if (C.ensureSchema(db).upgradedFrom) this.showToast('Your data was upgraded to the new format. Nothing was lost.', 'info'); opened = true; }
                         catch (e) {
                             console.error('Saved database rejected:', e);
                             store.set(LS_REJECTED, raw);                       // kept, never deleted
-                            this.showToast(e.code === 'OLD_SCHEMA' ? 'The data saved in this browser is from an older version, so it was set aside (not deleted). Import your v4 .db file to continue.' : 'Saved data could not be opened. A backup copy was kept and a fresh database was started.', 'error');
+                            this.showToast(e.code === 'OLD_SCHEMA' ? 'The data saved in this browser is from an older version, so it was set aside (not deleted). Import your exported .db file to continue.' : 'Saved data could not be opened. A backup copy was kept and a fresh database was started.', 'error');
                             db = null;
                         }
                     }
@@ -218,9 +218,9 @@
             get draftCount() { return [this.commitments, this.expenseLogs, this.events].reduce((n, a) => n + a.filter(r => r._draft).length, 0); },
             loadDataFromDB() {
                 const R = t => C.rowsOf(db, `SELECT * FROM ${t} ORDER BY id`).map(clean);
-                this.commitments = R('commitments').map(r => ({ ...r, amount: C.toMoney(r.amount), dueDay: C.toInt(r.dueDay) ?? '', dueMonth: C.toInt(r.dueMonth) ?? '', pausedMonth: C.isMonthKey(r.pausedMonth) ? r.pausedMonth : '', archived: r.archived ? 1 : 0 }));
+                this.commitments = R('commitments').map(r => ({ ...r, amount: C.toMoney(r.amount), every: C.everyOf(r), dueDay: C.toInt(r.dueDay) ?? '', dueMonth: C.toInt(r.dueMonth) ?? '', pausedMonth: C.isMonthKey(r.pausedMonth) ? r.pausedMonth : '', archived: r.archived ? 1 : 0 }));
                 this.expenseLogs = R('expense_logs').map(r => ({ ...r, amount: C.toMoney(r.amount), commitmentId: C.toInt(r.commitmentId) ?? '' }));
-                this.events = R('events').map(r => ({ ...r, budget: C.toMoney(r.budget), done: r.done ? 1 : 0 }));
+                this.events = R('events').map(r => ({ ...r, repeatUnit: C.ENUMS.repeatUnit.includes(r.repeatUnit) ? r.repeatUnit : 'None', repeatEvery: C.toInt(r.repeatEvery) || 1, doneDate: C.validISO(r.doneDate) ? r.doneDate : '' }));
                 try { this.skips = C.rowsOf(db, 'SELECT commitmentId, commitmentDate FROM skips').filter(k => C.toInt(k.commitmentId) && C.validISO(k.commitmentDate)); } catch (e) { this.skips = []; }
                 this.selectedRowIds = []; this.lSel = []; this.dueSel = []; this.dueOpen = '';
                 this.loadSettings();
@@ -325,7 +325,7 @@
                 if (this.cloud.pending || this.saveState === 'dirty') return { text: this.cloud.auto ? 'Backup pending' : 'Not backed up', cls: 'text-amber-300', icon: 'fa-cloud', title: this.cloud.auto ? 'Changes will upload in a few seconds.' : 'Auto backup is off. Use Save or Back up now.' };
                 return { text: 'Backed up' + (t ? ' ' + t : '') + ' · ' + mode, cls: 'text-emerald-400', icon: 'fa-cloud-arrow-up', title: this.cloudName + ': last backup ' + this.fmtWhen(at) + '\nAuto backup is ' + (this.cloud.auto ? 'on' : 'off') };
             },
-            get dbLabel() { return this.demo ? 'Demo data' : this.cloudOn.length ? this.cloudName + ' · gowtham_tracker_latest.db' : (this.settings.dbName || this.settings.lastExport || 'New database (not imported)'); },
+            get dbLabel() { return this.demo ? 'Demo data' : this.cloudOn.length ? this.cloudName + ' · synced copy' : (this.settings.dbName || this.settings.lastExport || 'New database (not imported)'); },
             get dbTitle() {
                 const s = this.settings;
                 if (this.cloudOn.length) return ['Using the ' + this.cloudName + ' copy: Apps folder > gowtham_tracker_latest.db', 'Also kept: one dated copy per day (last 14)', s.dbName && s.dbName !== 'gowtham_tracker_latest.db' ? 'Last restored from: ' + s.dbName : ''].filter(Boolean).join('\n');
@@ -390,18 +390,23 @@
             errList(k, o) { return Object.values(this.errs(k, o)); },
             bad(k, o, f) { return this.errs(k, o)[f] ? '!border-red-500 ring-1 ring-red-500' : ''; },
             dayList(m) { const n = C.toInt(m) ? C.daysInMonth(2024, C.toInt(m)) : 31; return Array.from({ length: n }, (_, i) => i + 1); },
-            fixDay(o) { const m = C.toInt(o.dueMonth), d = C.toInt(o.dueDay); if (m && d && d > C.daysInMonth(2024, m)) { o.dueDay = C.daysInMonth(2024, m); this.rev++; } },
+            // Yearly: the day cannot exceed its month. Every-N-months keeps e.g. 31 (short months use their last day).
+            fixDay(o) { if (o.frequency !== 'Yearly') return; const m = C.toInt(o.dueMonth), d = C.toInt(o.dueDay); if (m && d && d > C.daysInMonth(2024, m)) { o.dueDay = C.daysInMonth(2024, m); this.rev++; } },
             onFreqChange(o) {
                 const [, sm, sd] = C.validISO(o.startDate) ? C.ymd(o.startDate) : [0, '', ''];
-                if (o.frequency === 'Monthly') { o.dueMonth = ''; if (C.toInt(o.dueDay) === null) o.dueDay = sd || 1; }
-                else if (o.frequency === 'One-Time') { o.dueDay = ''; o.dueMonth = ''; if (!o.endDate) o.endDate = C.validISO(o.startDate) ? o.startDate : this.today; }
-                else { if (o.endDate && o.endDate === o.startDate) o.endDate = ''; if (C.toInt(o.dueDay) === null) o.dueDay = sd || ''; if (C.toInt(o.dueMonth) === null) o.dueMonth = sm || ''; this.fixDay(o); }
+                if (o.frequency === 'One-Time') { o.dueDay = ''; o.dueMonth = ''; o.every = 1; if (!o.endDate) o.endDate = C.validISO(o.startDate) ? o.startDate : this.today; }
+                else {
+                    if (!(C.toInt(o.every) >= 1 && C.toInt(o.every) <= C.MAX_EVERY)) o.every = 1;
+                    if (o.endDate && o.endDate === o.startDate) o.endDate = '';
+                    if (C.toInt(o.dueDay) === null) o.dueDay = sd || 1;
+                    if (C.needsDueMonth(o)) { if (C.toInt(o.dueMonth) === null) o.dueMonth = sm || ''; this.fixDay(o); }
+                    else o.dueMonth = '';                               // plain monthly has no month
+                }
                 this.rev++;
             },
 
             /* ============================== option lists ============================== */
             union(base, extra) { return [...new Set([...base, ...extra].filter(Boolean))]; },
-            get regionOptions() { return this.memo('ro', '', () => stable('ro', this.union(this.regions, [...this.commitments.map(c => c.region), ...this.expenseLogs.map(l => l.region)]))); },
             get currencyOptions() { return this.memo('co', '', () => stable('co', this.union(this.currencies, [...this.commitments.map(c => c.currency), ...this.expenseLogs.map(l => l.currency), ...this.events.map(e => e.currency)]))); },
             get categoryOptions() { return this.memo('ca', '', () => stable('ca', this.union(this.categories, [...this.commitments.map(c => c.category), ...this.expenseLogs.map(l => l.category)]))); },
             get methodOptions() { return this.memo('me', '', () => stable('me', this.union(this.methods, [...this.commitments.map(c => c.method), ...this.expenseLogs.map(l => l.method)]))); },
@@ -462,11 +467,23 @@
             get activeCount() { return this.liveC.length - this.archivedCount; },
             setPayView(v) { if (v === this.payView) return; this.payView = v; this.selectedRowIds = []; this.refreshView(); },
             scheduleText(c) {
-                if (c.frequency === 'Monthly') return c.dueDay ? `Day ${c.dueDay} monthly` : 'Monthly';
                 if (c.frequency === 'One-Time') return c.endDate ? 'Due ' + C.fmtDate(c.endDate) : 'One-Time';
-                const d = c.dueDay && c.dueMonth ? `${c.dueDay} ${C.MONTH_NAMES[c.dueMonth - 1]}` : '';
-                return (c.frequency === 'Yearly' ? 'Yearly ' : 'Every 2 mo from ') + d;
+                const n = C.everyOf(c), mon = C.toInt(c.dueMonth) ? C.MONTH_NAMES[c.dueMonth - 1] : '';
+                if (c.frequency === 'Yearly') return (n === 1 ? 'Yearly' : `Every ${n} years`) + (c.dueDay && mon ? ` · ${c.dueDay} ${mon}` : '');
+                if (n === 1) return c.dueDay ? `Day ${c.dueDay} monthly` : 'Monthly';
+                return `Every ${n} months` + (c.dueDay ? ` · day ${c.dueDay}` : '') + (mon ? ` from ${mon}` : '');
             },
+            /* Frequency + interval as ONE choice for the table ("Every 2 months", "Every 5 years"...). Any other interval
+             * (set in the edit form, 1-120) is listed too, so the table never hides what a row really is. */
+            freqKey(o) { return o.frequency + '|' + (o.frequency === 'One-Time' ? 1 : C.everyOf(o)); },
+            freqChoices(o) {
+                const base = [['Monthly', 1], ['Monthly', 2], ['Monthly', 3], ['Monthly', 6], ['Yearly', 1], ['Yearly', 2], ['Yearly', 3], ['Yearly', 5], ['One-Time', 1]];
+                const list = base.map(([f, n]) => [f + '|' + n, C.frequencyLabel({ frequency: f, every: n })]), cur = this.freqKey(o);
+                if (!list.some(x => x[0] === cur) && C.ENUMS.frequency.includes(o.frequency)) list.push([cur, C.frequencyLabel(o)]);
+                return list;
+            },
+            setFreqKey(o, key) { const [f, n] = String(key).split('|'); if (!C.ENUMS.frequency.includes(f)) return; o.frequency = f; o.every = C.toInt(n) || 1; this.onFreqChange(o); },
+            needsMonth(o) { return C.needsDueMonth(o); },
             rangeText(c) { return c.frequency === 'One-Time' ? '' : `${C.fmtDate(c.startDate)} → ${c.endDate ? C.fmtDate(c.endDate) : 'ongoing'}`; },
             sortedCommitmentIds() {
                 const f = this.f, q = f.search.toLowerCase().trim(), info = this.stInfo.map, arch = this.payView === 'archived';
@@ -531,9 +548,9 @@
             /* ============================== commitments: CRUD + payments ============================== */
             blank(k) {
                 const t = this.today;
-                return k === 'c' ? { name: '', region: 'UAE', category: '', amount: '', currency: 'AED', frequency: 'Monthly', dueDay: C.ymd(t)[2], dueMonth: '', startDate: t, endDate: '', method: '', notes: '', pausedMonth: '', archived: 0 }
-                    : k === 'l' ? { actualDate: t, commitmentDate: '', commitmentId: '', region: 'UAE', category: '', item: '', amount: '', currency: 'AED', method: '', notes: '' }
-                        : { title: '', kind: 'Event', eventDate: t, repeat: 'None', budget: 0, currency: 'AED', done: 0, notes: '' };
+                return k === 'c' ? { name: '', category: '', amount: '', currency: 'AED', frequency: 'Monthly', every: 1, dueDay: C.ymd(t)[2], dueMonth: '', startDate: t, endDate: '', method: '', notes: '', pausedMonth: '', archived: 0 }
+                    : k === 'l' ? { actualDate: t, commitmentDate: '', commitmentId: '', category: '', item: '', amount: '', currency: 'AED', method: '', notes: '' }
+                        : { title: '', kind: 'Event', eventDate: t, repeatUnit: 'None', repeatEvery: 1, doneDate: '', notes: '' };
             },
             arrOf(k) { return k === 'c' ? 'commitments' : k === 'l' ? 'expenseLogs' : 'events'; },
             // Desktop: inline draft pinned on top (never sorted). Mobile: full-screen form, row is created on Save.
@@ -578,7 +595,7 @@
             // ----- modal (mobile + "Edit" on desktop) -----
             openModal(k, o, isNew = false) { this.modal = { show: true, kind: k, isNew, orig: isNew ? null : o, item: { ...o } }; },
             closeModal() { this.modal.show = false; },     // item/orig stay until the next open so the closing form never reads null
-            scheduleChanged(a, b) { return ['frequency', 'dueDay', 'dueMonth', 'startDate', 'endDate'].some(f => String(a[f] ?? '') !== String(b[f] ?? '')); },
+            scheduleChanged(a, b) { return ['frequency', 'every', 'dueDay', 'dueMonth', 'startDate', 'endDate'].some(f => String(a[f] ?? '') !== String(b[f] ?? '')); },
             saveModal(thenPay = false) {
                 const { kind: k, isNew, orig, item } = this.modal;
                 const e = this.errList(k, item);
@@ -596,7 +613,7 @@
             // Adds the Expense Log row that settles one due date; returns it (or null if that date is already paid).
             payOccurrence(c, date) {
                 if (C.buildPaidIndex(this.expenseLogs).has(C.occKey(c.id, date))) return null;
-                const log = { id: this.newId(this.expenseLogs), actualDate: this.today, commitmentDate: date, commitmentId: c.id, region: c.region || 'UAE', category: c.category || 'General', item: c.name || 'Payment', amount: C.toMoney(c.amount), currency: c.currency || 'AED', method: c.method || '', notes: 'Payment for due date ' + date };
+                const log = { id: this.newId(this.expenseLogs), actualDate: this.today, commitmentDate: date, commitmentId: c.id, category: c.category || 'General', item: c.name || 'Payment', amount: C.toMoney(c.amount), currency: c.currency || 'AED', method: c.method || '', notes: 'Payment for due date ' + date };
                 this.expenseLogs.unshift(log);
                 this.lView.ids.unshift(log.id); this.lView.total++;
                 return log;
@@ -827,7 +844,7 @@
             get logOptions() {
                 return this.memo('lo', '', () => {
                     const d = k => [...new Set(this.expenseLogs.map(l => l[k]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
-                    return { category: stable('lo_c', d('category')), method: stable('lo_m', d('method')), region: stable('lo_r', d('region')), currency: stable('lo_u', d('currency')) };
+                    return { category: stable('lo_c', d('category')), method: stable('lo_m', d('method')), currency: stable('lo_u', d('currency')) };
                 });
             },
             resetLogFilters() { this.lf = BLANK_LF(); this.ls = [{ col: 'actualDate', dir: 'desc' }, { col: 'amount', dir: 'desc' }, { col: '', dir: 'asc' }]; },
@@ -858,21 +875,36 @@
             evState(e) { return C.eventState(e, this.today); },
             evNext(e) { return C.nextEventDate(e, this.today); },
             evClass(e) { return { Overdue: 'bg-red-500/10 text-red-400', Done: 'bg-emerald-500/10 text-emerald-400', 'Due today': 'bg-amber-500/10 text-amber-400', Today: 'bg-amber-500/10 text-amber-400', Open: 'bg-sky-500/10 text-sky-300', Upcoming: 'bg-sky-500/10 text-sky-300', Past: 'bg-slate-500/20 text-slate-400' }[this.evState(e)] || 'bg-slate-500/20 text-slate-300'; },
+            evDone(e) { return C.eventDone(e, this.today); },
+            evRepeat(e) { return C.repeatLabel(e); },
+            evSub(e) {            // second line of a card: date + how it repeats
+                const n = this.evNext(e) || e.eventDate, d = C.validISO(n) ? C.daysBetween(this.today, n) : null;
+                const when = d === null ? '' : d === 0 ? 'today' : d === 1 ? 'tomorrow' : d > 1 ? `in ${d} days` : d === -1 ? 'yesterday' : `${-d} days ago`;
+                return [C.fmtDate(n), when, e.repeatUnit !== 'None' ? C.repeatLabel(e).toLowerCase() : ''].filter(Boolean).join(' · ');
+            },
             sortedEventIds() {
-                const f = this.ef, t = this.today;
-                return this.events.filter(e => !e._draft && (f.kind === 'All' || e.kind === f.kind) && (f.showDone || !e.done))
-                    .sort((a, b) => (a.done - b.done) || ((C.nextEventDate(a, t) || '9999').localeCompare(C.nextEventDate(b, t) || '9999')) || (a.title || '').localeCompare(b.title || '')).map(e => e.id);
+                const f = this.ef, t = this.today, done = e => (C.eventDone(e, t) ? 1 : 0);
+                return this.events.filter(e => !e._draft && (f.kind === 'All' || e.kind === f.kind) && (f.showDone || !done(e)))
+                    .sort((a, b) => (done(a) - done(b)) || ((C.nextEventDate(a, t) || '9999').localeCompare(C.nextEventDate(b, t) || '9999')) || (a.title || '').localeCompare(b.title || '')).map(e => e.id);
             },
             refreshEvents() { this.rev++; const drafts = this.events.filter(e => e._draft).map(e => e.id).reverse(); this.eView = [...drafts, ...this.sortedEventIds()]; },
             get eRows() { const m = new Map(this.events.map(e => [e.id, e])); return this.eView.map(id => m.get(id)).filter(Boolean); },
-            toggleDone(e) { e.done = e.done ? 0 : 1; this.rev++; if (this.save([['UPDATE events SET done = ? WHERE id = ?', [e.done, Number(e.id)]]])) this.showToast(e.done ? 'Task marked done.' : 'Task re-opened.', 'info'); },
+            // Ticking a task marks its CURRENT date as done. A repeating task opens again by itself on its next date.
+            toggleDone(e) {
+                if (e._draft) { this.showToast('Save the row first, then tick it off.', 'info'); return; }
+                const was = this.evDone(e), d = C.eventDates(e, this.today);
+                e.doneDate = was ? '' : (d.cur || this.today); this.rev++;
+                if (!this.save([['UPDATE events SET doneDate = ? WHERE id = ?', [e.doneDate || null, Number(e.id)]]])) return;
+                this.showToast(was ? 'Task re-opened.' : (e.repeatUnit !== 'None' && d.next ? `Done. It comes back on ${C.fmtDate(d.next)}.` : 'Task marked done.'), 'info');
+            },
+            onRepeatChange(e) { if (e.repeatUnit === 'None' || !(C.toInt(e.repeatEvery) >= 1)) e.repeatEvery = 1; this.rev++; },
             get upcomingEvents() {
                 return this.memo('ue', '', () => {
                     const t = this.today;
-                    return this.events.filter(e => !e._draft && !e.done).map(e => {
+                    return this.events.filter(e => !e._draft && !C.eventDone(e, t)).map(e => {
                         const n = C.nextEventDate(e, t); if (!n) return null;
                         const days = C.daysBetween(t, n);
-                        return days <= 45 && (days >= 0 || e.kind === 'Task') ? { id: e.id, title: e.title || 'Untitled', kind: e.kind, date: n, days, budget: e.budget, currency: e.currency } : null;
+                        return days <= 45 && (days >= 0 || e.kind === 'Task') ? { id: e.id, title: e.title || 'Untitled', kind: e.kind, date: n, days, repeat: e.repeatUnit !== 'None' ? C.repeatLabel(e).toLowerCase() : '', e } : null;
                     }).filter(Boolean).sort((a, b) => a.days - b.days);
                 });
             },
@@ -889,6 +921,7 @@
                 return this.memo('ccur', JSON.stringify(this.dash), () => {
                     const s = new Set(), lo = this.prevWin.start, hi = this.win.end;
                     this.an.occ.forEach(o => s.add(o.currency));
+                    this.barRows.forEach(m => Object.keys(m.required).concat(Object.keys(m.actual)).forEach(c => s.add(c)));
                     this.liveL.forEach(l => { if (C.validISO(l.actualDate) && l.actualDate >= lo && l.actualDate <= hi) s.add(l.currency || 'AED'); });
                     return stable('ccur', [...s].sort());
                 });
@@ -901,7 +934,29 @@
                 this.liveL.forEach(l => { if (C.validISO(l.actualDate)) s.add(+l.actualDate.slice(0, 4)); });
                 return [...s].sort((a, b) => a - b);
             },
-            stepWindow(dir) { const n = C.shiftSelection(this.win, dir); if (n) this.dash = { ...this.dash, ...n }; else this.showToast('That is outside the supported date range.', 'info'); },
+            stepWindow(dir) {
+                const n = C.shiftSelection(this.win, dir); if (!n) { this.showToast('That is outside the supported date range.', 'info'); return; }
+                if (n.mode === 'months' && n.fromY === n.toY && n.fromM === n.toM) {          // one month: keep the plain names when they fit
+                    const [ty, tm] = C.ymd(this.today), off = (n.fromY * 12 + n.fromM) - (ty * 12 + tm), named = { 0: 'this', 1: 'next', '-1': 'last' }[off];
+                    if (named) { this.dash = { ...this.dash, mode: named }; return; }
+                }
+                this.dash = { ...this.dash, ...n };
+            },
+            // Quick choices of the time window. "Custom" starts from whatever is showing now.
+            winChips: [['this', 'This month'], ['next', 'Next month'], ['last', 'Last month'], ['last3', 'Last 3 months'], ['next3', 'Next 3 months'], ['year', 'This year'], ['months', 'Custom']],
+            winMore: [['last6', 'Last 6 months'], ['next6', 'Next 6 months'], ['next12', 'Next 12 months'], ['ytd', 'Year to date'], ['rest', 'Rest of this year']],
+            winIs(k) { const d = this.dash; return k === 'year' ? d.mode === 'year' && Number(d.year) === C.ymd(this.today)[0] : d.mode === k; },
+            setWin(k) {
+                const m = this.win.months, f = m[0], l = m[m.length - 1];
+                if (k === 'year') this.dash = { ...this.dash, mode: 'year', year: C.ymd(this.today)[0] };
+                else if (k === 'months') this.dash = { ...this.dash, mode: 'months', fromM: f.m, fromY: f.y, toM: l.m, toY: l.y };
+                else if (k) this.dash = { ...this.dash, mode: k };
+            },
+            get winShort() {          // "Nov 2026", "Sep – Nov 2026", "2026"
+                const m = this.win.months, f = m[0], l = m[m.length - 1];
+                if (this.win.mode === 'year') return String(f.y);
+                return m.length === 1 ? f.label : (f.y === l.y ? `${C.MONTH_NAMES[f.m - 1]} – ${l.label}` : `${f.label} – ${l.label}`);
+            },
             resetWindow() { this.dash = C.sanitizeSelection({ mode: 'this' }, this.today); },
             get isThisMonth() { return this.dash.mode === 'this'; },
 
@@ -1002,7 +1057,29 @@
             },
             reviewPaused() { this.tab = 'pay'; this.setPayView('active'); this.f = { ...this.f, status: 'Paused' }; },
             get paidPct() { return this.an.occ.length ? Math.round((this.an.paidCount / this.an.occ.length) * 100) : 0; },
-            get barRows() { return this.an.perMonth; },
+            /* "Planned vs spent" bars. One month alone says little, so a one-month window shows that month with the five
+             * before it; longer windows show their own months. */
+            get barRows() {
+                return this.memo('bars', JSON.stringify(this.dash), () => {
+                    if (this.win.months.length > 1) return this.an.perMonth;
+                    const m = this.win.months[0], [fy, fm] = C.addMonths(m.y, m.m, -5);
+                    const w = C.makeWindow({ mode: 'months', fromY: fy, fromM: fm, toY: m.y, toM: m.m }, this.today);
+                    return C.analyze(this.liveC, this.liveL, w, this.today, this.stInfo.skips).perMonth;
+                });
+            },
+            get barNote() { return this.win.months.length > 1 ? 'Each month of ' + this.winShort : 'The 6 months up to ' + this.win.months[0].label; },
+            // One plain sentence for the spending chart of a currency.
+            trendText(cur) {
+                const t = this.trendFor(cur), up = (a, b) => b ? ` (${a >= b ? '▲' : '▼'} ${Math.abs(((a - b) / b) * 100).toFixed(0)}%)` : '';
+                if (this.win.months.length === 1) {
+                    let i = t.current.length - 1; while (i >= 0 && t.current[i] === null) i--;          // last day drawn (today, or the month's last day)
+                    if (i < 0) return 'Nothing to compare yet.';
+                    let j = Math.min(i, t.previous.length - 1); while (j >= 0 && t.previous[j] === null) j--;
+                    const a = t.current[i], b = j >= 0 ? t.previous[j] : 0, running = this.win.end >= this.today && this.win.start <= this.today;
+                    return `${this.money(a, cur)} spent${running ? ' so far' : ''} · ${b ? this.money(b, cur) : 'nothing'} ${running ? 'by the same day in' : 'in'} ${this.prevWin.label}${up(a, b)}`;
+                }
+                return `${this.money(t.curTotal, cur)} in this period · ${this.money(t.prevTotal, cur)} in ${this.prevWin.label}${up(t.curTotal, t.prevTotal)}`;
+            },
             hasBarFor(cur) { return this.barRows.some(m => (m.required[cur] || 0) > 0 || (m.actual[cur] || 0) > 0); },
             hasTrendFor(cur) { const t = this.trendFor(cur); return t.curTotal > 0 || t.prevTotal > 0; },
             sumBy(items) { const m = {}; items.forEach(i => C.addTo(m, i.currency || 'AED', Number(i.amount) || 0)); return m; },
@@ -1047,11 +1124,11 @@
                 this.chartCurs.forEach(cur => {
                     const tr = this.trendFor(cur), k = this.cid(cur);
                     mk('chBar-' + k, 'bar', { labels: pm.map(m => m.label), datasets: [
-                        { label: 'Upcoming obligations', data: pm.map(m => m.required[cur] || 0), backgroundColor: COLOR.obl, ...bar },
-                        { label: 'Actual expenses', data: pm.map(m => m.actual[cur] || 0), backgroundColor: COLOR.act, ...bar }] }, cur);
+                        { label: 'Planned (due dates)', data: pm.map(m => m.required[cur] || 0), backgroundColor: COLOR.obl, ...bar },
+                        { label: 'Spent (expense log)', data: pm.map(m => m.actual[cur] || 0), backgroundColor: COLOR.act, ...bar }] }, cur);
                     const pr = arr => (arr.filter(v => v !== null).length < 3 ? 4 : (tr.labels.length > 14 ? 0 : 3));      // a lone point must stay visible
                     mk('chTrend-' + k, 'line', { labels: tr.labels, datasets: [
-                        { label: this.win.label.replace(/ \(.*\)$/, '') + (this.win.months.length === 1 ? ' (cumulative)' : ''), data: tr.current, borderColor: COLOR.act, backgroundColor: COLOR.act, borderWidth: 2, tension: .25, spanGaps: false, pointRadius: pr(tr.current) },
+                        { label: this.winShort, data: tr.current, borderColor: COLOR.act, backgroundColor: COLOR.act, borderWidth: 2, tension: .25, spanGaps: false, pointRadius: pr(tr.current) },
                         { label: this.prevWin.label, data: tr.previous, borderColor: COLOR.prev, backgroundColor: COLOR.prev, borderWidth: 2, borderDash: [5, 4], tension: .25, spanGaps: false, pointRadius: pr(tr.previous) }] }, cur);
                 });
             },
@@ -1060,7 +1137,7 @@
             exportSQLite() {
                 if (!db) return;
                 if (this.saveState === 'dirty' && (this.settings.autoSave || confirm('You have unsaved changes.\n\nOK = save them and export · Cancel = export the last saved version'))) this.persist({ toast: false });
-                const name = `gowtham_tracker_v${C.SCHEMA_VERSION}_${stamp()}.db`;
+                const name = `tracker_v${C.SCHEMA_VERSION}_${stamp()}.db`;
                 try { C.inTx(db, () => { C.writeSetting(db, 'lastExport', name); C.writeSetting(db, 'exportPending', '0'); }); this.settings.lastExport = name; this.settings.exportPending = false; this.writeStore(); }
                 catch (e) { console.error(e); }
                 download(new Blob([db.export()], { type: 'application/x-sqlite3' }), name);
@@ -1070,10 +1147,10 @@
             exportCSV() {
                 const cell = v => { if (v === null || v === undefined) return ''; let s = String(v); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
                 const rows = [['Type', 'Name / Item', 'Category', 'Amount', 'Currency', 'Frequency / Kind', 'Schedule', 'Start date', 'End date', 'Actual date', 'Commitment date', 'Linked commitment', 'Status', 'Method', 'Notes']];
-                this.commitments.filter(c => !c._draft).forEach(c => rows.push(['Commitment', c.name, c.category, c.amount, c.currency, c.frequency, this.scheduleText(c), c.startDate, c.endDate, '', '', '', this.st(c).status, c.method, c.notes]));
+                this.commitments.filter(c => !c._draft).forEach(c => rows.push(['Commitment', c.name, c.category, c.amount, c.currency, C.frequencyLabel(c), this.scheduleText(c), c.startDate, c.endDate, '', '', '', this.st(c).status, c.method, c.notes]));
                 this.expenseLogs.filter(l => !l._draft).forEach(l => rows.push(['ExpenseLog', l.item, l.category, l.amount, l.currency, '', '', '', '', l.actualDate, l.commitmentDate, this.commitmentName(l.commitmentId), '', l.method, l.notes]));
-                this.events.filter(e => !e._draft).forEach(e => rows.push([e.kind, e.title, '', e.budget, e.currency, e.repeat, '', e.eventDate, '', '', '', '', this.evState(e), '', e.notes]));
-                download(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'gowtham_export_' + stamp() + '.csv');
+                this.events.filter(e => !e._draft).forEach(e => rows.push([e.kind, e.title, '', '', '', C.repeatLabel(e), '', e.eventDate, '', '', '', '', this.evState(e), '', e.notes]));
+                download(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'tracker_export_' + stamp() + '.csv');
                 this.showToast('CSV exported successfully!');
             },
             async importSQLite(event) {
@@ -1100,7 +1177,7 @@
                         db = candidate; clearTimeout(this._saveTimer);
                         this.loadDataFromDB(); this.persist({ toast: false, mark: false }); this.runLogQuery();
                         if (prev) prev.close();
-                        if (!quiet) this.showToast((res.upgradedFrom ? 'Imported and upgraded to v5: ' : 'Imported: ') + fname);
+                        if (!quiet) this.showToast((res.upgradedFrom ? 'Imported and upgraded to the new format: ' : 'Imported: ') + fname);
                         return true;
                     } catch (err) {
                         db = prev; try { candidate.close(); } catch (_) { } try { if (db) this.loadDataFromDB(); } catch (_) { }
