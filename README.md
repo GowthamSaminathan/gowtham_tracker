@@ -5,7 +5,7 @@ A private tracker for recurring payments, everyday expenses, events and tasks. I
 - **Use it:** <https://tracker.gowthams.com>
 - **Try it with sample data:** <https://tracker.gowthams.com/?demo=1>
 
-Current version: 7.0.0
+Current version: 7.0.1
 
 ## What it does
 
