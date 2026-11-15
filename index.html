@@ -18,22 +18,22 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
     <title>Tracker</title>
     <!-- Everything is local: the app works with no internet connection -->
-    <link rel="stylesheet" href="assets/css/tailwind.css?v=6.1.0">
+    <link rel="stylesheet" href="assets/css/tailwind.css?v=7.0.0">
     <link rel="stylesheet" href="assets/css/fontawesome.min.css">
     <script src="assets/js/sql-wasm.js"></script>
     <script src="assets/js/sql-wasm-binary.js"></script>
     <script src="assets/js/chart.umd.js"></script>
-    <script src="backup-config.js?v=6.1.0"></script>
-    <script src="assets/js/backup.js?v=6.1.0"></script>
-    <script src="assets/js/core.js?v=6.1.0"></script>
-    <script src="assets/js/demo.js?v=6.1.0"></script>
-    <script src="assets/js/app.js?v=6.1.0"></script>
+    <script src="backup-config.js?v=7.0.0"></script>
+    <script src="assets/js/backup.js?v=7.0.0"></script>
+    <script src="assets/js/core.js?v=7.0.0"></script>
+    <script src="assets/js/demo.js?v=7.0.0"></script>
+    <script src="assets/js/app.js?v=7.0.0"></script>
     <!-- Version tags (?v=) above make browsers fetch fresh scripts after each release. Bump them together with appVersion.
          Safety net: if an old cached script still slipped through, reload once instead of showing a broken page. -->
     <script>(function () { if (window.Core && window.Core.moneyBreakdown && window.combo) return;
         try { if (sessionStorage.getItem('tracker_stale_reload')) return; sessionStorage.setItem('tracker_stale_reload', '1'); } catch (e) { return; }
         location.reload(); })();</script>
-    <script src="assets/js/alpine.min.js?v=6.1.0" defer></script>
+    <script src="assets/js/alpine.min.js?v=7.0.0" defer></script>
     <script>/* installable + works offline: the service worker keeps the app files; your data never leaves the device except to YOUR drive */
         if ('serviceWorker' in navigator && location.protocol !== 'file:') addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () { }); });</script>
     <style>
@@ -75,7 +75,7 @@
                     <i class="fa-solid fa-receipt"></i> <span><span class="hidden xl:inline">Expense </span>Log</span>
                 </button>
                 <button @click="tab = 'events'" :class="tab === 'events' ? 'bg-sky-500 text-onaccent font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2 whitespace-nowrap">
-                    <i class="fa-solid fa-calendar-check"></i> <span>Events<span class="hidden xl:inline"> &amp; Tasks</span></span>
+                    <i class="fa-solid fa-calendar-check"></i> <span>Events<span class="hidden xl:inline"> &amp; Tasks</span></span><span x-show="reminders.n" style="display:none" class="min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold leading-[1.1rem] text-center" x-text="reminders.n" :title="reminders.n + ' task(s) or event(s) for today or overdue'"></span>
                 </button>
                 <button @click="tab = 'settings'" :class="tab === 'settings' ? 'bg-sky-500 text-onaccent font-semibold shadow-sm shadow-sky-500/30' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-2 whitespace-nowrap">
                     <i class="fa-solid fa-gear"></i> Settings
@@ -193,6 +193,41 @@
                 <p x-show="an.archivedCount" class="text-[10px] text-slate-500 text-center" x-text="an.archivedCount + ' archived commitment(s) are not counted'"></p>
             </div>
 
+            <!-- Reminders: tasks and events for today and overdue, with what is coming up folded below -->
+            <template x-if="reminders.now.length || reminders.soon.length">
+                <div class="card p-3 sm:p-4 space-y-2" data-nosave data-reminders>
+                    <div class="flex items-center justify-between gap-2">
+                        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-bell text-amber-400 mr-1"></i> Reminders
+                            <span x-show="reminders.overdue.length" class="badge bg-red-500/10 text-red-400 ml-1 normal-case" x-text="reminders.overdue.length + ' overdue'"></span>
+                            <span x-show="reminders.today.length" class="badge bg-amber-500/10 text-amber-400 ml-1 normal-case" x-text="reminders.today.length + ' today'"></span></h3>
+                        <button @click="tab = 'events'" class="text-[11px] text-sky-400 hover:underline shrink-0">Open events &amp; tasks</button>
+                    </div>
+                    <p x-show="!reminders.now.length" class="text-xs text-slate-500">Nothing for today.</p>
+                    <div class="max-h-56 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+                        <template x-for="r in reminders.now" :key="r.id">
+                            <div class="flex items-center gap-2 text-xs bg-slate-950/60 px-2.5 py-1.5 rounded-xl border" :class="r.days < 0 ? 'border-red-900/50' : 'border-slate-800/80'" :data-rem="r.id">
+                                <template x-if="r.kind === 'Task'"><button type="button" @click="toggleDone(r.e)" class="shrink-0 w-7 h-7 rounded-full border-2 border-slate-500 text-transparent hover:border-emerald-500 hover:text-emerald-400 grid place-items-center transition" title="Mark this task done" :aria-label="'Mark done: ' + r.title" data-act="dash-done"><i class="fa-solid fa-check text-[10px]"></i></button></template>
+                                <template x-if="r.kind !== 'Task'"><span class="shrink-0 w-7 h-7 rounded-full bg-sky-500/10 text-sky-400 grid place-items-center"><i class="fa-solid fa-calendar-day text-[10px]"></i></span></template>
+                                <div class="flex-1 min-w-0"><p class="text-white font-medium truncate" x-text="r.title"></p>
+                                    <p class="text-[10px] truncate" :class="r.days < 0 ? 'text-red-400' : 'text-amber-300'" x-text="remWhen(r) + (r.days < 0 ? ' · ' + fmtDate(r.date) : '') + (r.repeat ? ' · ' + r.repeat : '')"></p></div>
+                                <button x-show="r.e.notes" type="button" @click="showNote(r.title, r.e.notes, 'e', r.e)" class="note-btn shrink-0" title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button>
+                            </div>
+                        </template>
+                    </div>
+                    <details x-show="reminders.soon.length" class="text-xs">
+                        <summary class="cursor-pointer text-slate-400 hover:text-slate-200" x-text="'Coming up in the next 45 days (' + reminders.soon.length + ')'"></summary>
+                        <div class="mt-2 max-h-56 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+                            <template x-for="r in reminders.soon" :key="r.id">
+                                <div class="flex items-center justify-between gap-2 bg-slate-950/60 px-2.5 py-1.5 rounded-xl border border-slate-800/80">
+                                    <span class="min-w-0 truncate text-white"><span class="badge bg-slate-700/60 text-slate-300 mr-1" x-text="r.kind"></span><span x-text="r.title"></span></span>
+                                    <span class="shrink-0 text-slate-400" x-text="shortDate(r.date) + ' · ' + remWhen(r)"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </details>
+                </div>
+            </template>
+
             <!-- Overdue now -->
             <template x-if="overdueList.length">
                 <div class="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-2">
@@ -214,6 +249,7 @@
                     <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-list-check text-sky-400 mr-1"></i> Due dates &amp; still to pay</h3>
                     <div class="flex items-center gap-1.5">
                         <select name="due-range" x-model="dueRange" aria-label="Period" class="inp !w-auto !min-h-0 !py-1 !text-xs"><template x-for="r in dueRanges" :key="r[0]"><option :value="r[0]" :selected="r[0] === dueRange" x-text="r[0] === 'window' ? 'Window: ' + win.label.replace(/ \(.*\)$/, '') : r[1]"></option></template></select>
+                        <button @click="exportDashboardCSV()" class="btn btn-ghost !px-2 !py-1" title="Export this dashboard as a CSV file: totals, the due dates shown here, and reminders" aria-label="Export dashboard as CSV" data-act="dash-export"><i class="fa-solid fa-file-csv"></i></button>
                         <button @click="showDueFilters = !showDueFilters" :aria-expanded="showDueFilters ? 'true' : 'false'" class="btn btn-ghost !px-2 !py-1 relative" title="Filter by category, commitment, amount" aria-label="Filters"><i class="fa-solid fa-filter"></i><span x-show="activeDueFilters" class="absolute -top-1.5 -right-1.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-sky-600 text-onaccent text-[10px] leading-[1.1rem] text-center" x-text="activeDueFilters"></span></button>
                     </div>
                 </div>
@@ -285,20 +321,6 @@
                 </div>
                 <p x-show="dueRows.length > 150" class="text-[10px] text-slate-500" x-text="'Showing the first 150 of ' + dueRows.length + ' (totals include all of them)'"></p>
             </div>
-
-            <!-- Upcoming events & tasks -->
-            <template x-if="upcomingEvents.length">
-                <div class="card p-4 space-y-2">
-                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-calendar-check text-amber-400 mr-1"></i> Events &amp; tasks · next 45 days</h3>
-                    <template x-for="e in upcomingEvents" :key="e.id">
-                        <div class="flex flex-col sm:flex-row sm:justify-between gap-0.5 sm:gap-3 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
-                            <span class="text-white font-medium sm:truncate"><span class="badge bg-slate-700/60 text-slate-300 mr-1" x-text="e.kind"></span><span x-text="e.title + ' · ' + fmtDate(e.date)"></span></span>
-                            <span class="flex items-center gap-2 sm:justify-end shrink-0"><span :class="e.days < 0 ? 'text-red-400' : e.days === 0 ? 'text-amber-300' : 'text-slate-400'" x-text="(e.days < 0 ? Math.abs(e.days) + ' day(s) overdue' : e.days === 0 ? 'Today' : e.days === 1 ? 'Tomorrow' : 'in ' + e.days + ' days') + (e.repeat ? ' · ' + e.repeat : '')"></span>
-                                <button x-show="e.kind === 'Task'" @click="toggleDone(e.e)" class="btn btn-em !px-2 !py-0.5" title="Mark this task done" :aria-label="'Mark ' + e.title + ' done'" data-act="dash-done"><i class="fa-solid fa-check"></i></button></span>
-                        </div>
-                    </template>
-                </div>
-            </template>
 
             <!-- Paused for this month (left out of this month's totals) -->
             <template x-if="pausedNow.items.length">
@@ -457,6 +479,7 @@
             <p x-show="payRangeInfo" class="text-[11px] rounded-xl bg-sky-500/10 border border-sky-700/40 px-2.5 py-1.5 text-sky-200" x-text="payRangeInfo ? (payRangeInfo.n + ' due date(s) between ' + (payRange.from ? fmtDate(payRange.from) : 'the start') + ' and ' + (payRange.to ? fmtDate(payRange.to) : 'the end') + ' · ' + fmtMap(payRangeInfo.total).replace(/\n/g, ' + ')) : ''"></p>
             <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400" data-nosave>
                 <span x-text="cRows.length + ' row(s)' + (payView === 'active' ? (isDesktop ? ' · tick rows to pay, pause, archive or edit them' : ' · tap a commitment to select it') : '')"></span>
+                <button @click="exportPayCSV()" class="btn btn-ghost !py-1 ml-auto" title="Download the commitments shown below as a CSV file (filters applied)" data-act="pay-export"><i class="fa-solid fa-file-csv"></i> Export <span class="font-normal" x-text="'(' + cRows.filter(c => !c._draft).length + ')'"></span></button>
                 <button x-show="sortPending" @click="refreshView()" class="btn btn-ghost !py-1"><i class="fa-solid fa-arrow-down-wide-short"></i> Apply sort / filters</button>
             </div>
             <p x-show="!cRows.length && !loading" class="text-center text-xs text-slate-500 py-8" x-text="payView === 'archived' ? 'No archived commitments match.' : 'No commitments match. Use “Add” to create one.'"></p>
@@ -470,7 +493,7 @@
                         <div class="flex items-center gap-2">
                             <span class="w-5 h-5 shrink-0 rounded-md border grid place-items-center transition" :class="isSel(item) ? 'bg-sky-600 border-sky-600 text-onaccent' : 'border-slate-600'"><i x-show="isSel(item)" class="fa-solid fa-check text-[10px]"></i></span>
                             <p class="flex-1 min-w-0 font-semibold text-white text-sm truncate" x-text="nm(item.name) || 'Unnamed'"></p>
-                            <button x-show="item.notes" type="button" @click.stop="showNote(item.name, item.notes)" class="note-btn " title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button>
+                            <button x-show="item.notes" type="button" @click.stop="showNote(item.name, item.notes, 'c', item)" class="note-btn " title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button>
                             <p class="font-bold text-slate-100 tabular-nums shrink-0" x-text="money(item.amount, item.currency)"></p>
                         </div>
                         <p x-show="payRangeOn" class="pl-7 mt-0.5 text-[11px] text-sky-300 truncate" x-text="payRangeOn ? 'Due: ' + rangeDue(item).map(d => shortDate(d)).join(', ') : ''"></p>
@@ -494,7 +517,7 @@
                             <tr :data-row="item.id" class="hover:bg-slate-800/30" :class="[item._draft ? 'bg-sky-950/30' : '', isSel(item) ? '!bg-sky-500/10' : '', flashId === item.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
                                 <td class="td"><span class="rowno" x-text="i + 1"></span></td>
                                 <td class="td"><input name="select-row" type="checkbox" :checked="isSel(item)" @change="toggleSelect(item)" :disabled="!!item._draft" data-nosave aria-label="Select row" class="rounded bg-slate-950 border-slate-700 disabled:opacity-30"></td>
-                                <td class="td"><div class="flex items-center gap-1"><input x-show="!privacy" name="name" type="text" x-model="item.name" :class="bad('c', item, 'name')" placeholder="Name" aria-label="Name" class="inp"><span x-show="privacy" style="display:none" class="inp block truncate" title="Masked - turn the mask off (eye button) to edit" x-text="nm(item.name) || '—'"></span><button x-show="item.notes" type="button" @click.stop="showNote(item.name, item.notes)" class="note-btn shrink-0" title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button></div></td>
+                                <td class="td"><div class="flex items-center gap-1"><input x-show="!privacy" name="name" type="text" x-model="item.name" :class="bad('c', item, 'name')" placeholder="Name" aria-label="Name" class="inp"><span x-show="privacy" style="display:none" class="inp block truncate" title="Masked - turn the mask off (eye button) to edit" x-text="nm(item.name) || '—'"></span><button x-show="item.notes" type="button" @click.stop="showNote(item.name, item.notes, 'c', item)" class="note-btn shrink-0" title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button></div></td>
                                 <td class="td"><div class="relative" x-data="combo('categoryOptions')" x-modelable="value" x-model="item.category" x-bind="root"><input name="category" x-model="value" x-bind="field" aria-label="Category" placeholder="Category" class="inp !pr-7"><button x-bind="toggle" aria-label="Show category suggestions" class="absolute right-0 inset-y-0 px-2 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></td>
                                 <td class="td"><div class="flex gap-1"><input x-show="!privacy" name="amount" type="text" inputmode="decimal" autocomplete="off" aria-label="Amount" placeholder="0.00" x-effect="if (document.activeElement !== $el) $el.value = fmtAmt(item.amount)" @focus="$el.value = (item.amount === '' || item.amount == null) ? '' : String(item.amount); $el.select()" @blur="$el.value = fmtAmt(item.amount)" @input="item.amount = parseAmt($el.value)" :class="bad('c', item, 'amount')" class="inp tabular-nums text-right flex-[3]"><span x-show="privacy" style="display:none" class="inp block tabular-nums text-right flex-[3]" title="Masked - turn the mask off (eye button) to edit" x-text="money(item.amount)"></span><select name="currency" x-model="item.currency" aria-label="Currency" class="inp flex-[2] !px-1.5 !pr-5"><template x-for="r in currencyOptions" :key="r"><option :value="r" :selected="r === item.currency" x-text="r"></option></template></select></div></td>
                                 <td class="td"><div class="flex gap-1"><input x-show="item.frequency !== 'One-Time'" name="every" type="number" inputmode="numeric" min="1" max="120" step="1" x-model.number="item.every" @change="$nextTick(() => onFreqChange(item))" :class="bad('c', item, 'every')" aria-label="Repeats every" title="Repeats every … (1 = every month / every year)" class="inp nospin !w-9 flex-none text-center tabular-nums !px-0.5">
@@ -568,6 +591,7 @@
             <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400" data-nosave>
                 <span><b class="text-slate-200" x-text="lView.total"></b> row(s) · <span class="text-sky-300 tabular-nums" x-text="lView.totals.map(t => money(t.total, t.currency)).join(' + ') || '—'"></span></span>
                 <span class="flex items-center gap-2">
+                    <button @click="exportLogCSV()" class="btn btn-ghost !py-1" title="Download every row that matches the filters as a CSV file (all pages)" data-act="log-export"><i class="fa-solid fa-file-csv"></i> Export <span class="font-normal" x-text="'(' + lView.total + ')'"></span></button>
                     <button x-show="lStale" @click="runLogQuery()" class="btn btn-ghost !py-1"><i class="fa-solid fa-arrow-down-wide-short"></i> Re-apply</button>
                     <select name="lpagesize" x-model.number="lPageSize" aria-label="Rows per page" class="inp !w-auto !min-h-0 !py-1"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
                     <button @click="lPage = Math.max(0, lPage - 1)" :disabled="lPage === 0" class="btn btn-ghost !px-2 !py-1 disabled:opacity-40" aria-label="Previous page"><i class="fa-solid fa-chevron-left"></i></button>
@@ -584,7 +608,7 @@
                         <div class="flex items-center gap-2">
                             <button type="button" role="checkbox" :aria-checked="lIsSel(l) ? 'true' : 'false'" @click.stop="lToggle(l)" @keydown.enter.stop :aria-label="'Select ' + (l.item || 'row')" class="-m-1.5 p-1.5 shrink-0"><span class="w-5 h-5 rounded-md border grid place-items-center" :class="lIsSel(l) ? 'bg-sky-600 border-sky-600 text-onaccent' : 'border-slate-600'"><i x-show="lIsSel(l)" class="fa-solid fa-check text-[10px]"></i></span></button>
                             <p class="flex-1 min-w-0 font-semibold text-white text-sm truncate" x-text="nm(l.item) || 'Untitled'"></p>
-                            <button x-show="l.notes" type="button" @click.stop="showNote(l.item, l.notes)" class="note-btn " title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button>
+                            <button x-show="l.notes" type="button" @click.stop="showNote(l.item, l.notes, 'l', l)" class="note-btn " title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button>
                             <p class="font-bold text-slate-100 tabular-nums shrink-0" x-text="money(l.amount, l.currency)"></p>
                         </div>
                         <p class="mt-0.5 pl-7 truncate text-slate-400"><span x-text="fmtDate(l.actualDate)"></span><span x-show="l.category || l.method" x-text="' · ' + [l.category, l.method].filter(Boolean).join(' · ')"></span><span x-show="l.commitmentId" class="text-emerald-300"> · <i class="fa-solid fa-link"></i> <span x-text="(nm(commitmentName(l.commitmentId)) || 'linked') + (l.commitmentDate ? ' (' + fmtDate(l.commitmentDate) + ')' : '')"></span></span></p>
@@ -603,7 +627,7 @@
                                 <td class="td"><input type="checkbox" name="log-select" :checked="lIsSel(l)" @change="lToggle(l)" :disabled="!!l._draft" data-nosave aria-label="Select row" class="rounded bg-slate-950 border-slate-700 disabled:opacity-30"></td>
                                 <td class="td"><input name="log-actualdate" type="date" x-model="l.actualDate" :class="bad('l', l, 'actualDate')" aria-label="Actual date" class="inp"></td>
                                 <td class="td"><input name="log-commitmentdate" type="date" x-model="l.commitmentDate" :class="bad('l', l, 'commitmentDate')" aria-label="Commitment date" class="inp"></td>
-                                <td class="td"><div class="flex items-center gap-1"><input x-show="!privacy" name="log-item" type="text" x-model="l.item" :class="bad('l', l, 'item')" aria-label="Description" placeholder="Description" class="inp"><span x-show="privacy" style="display:none" class="inp block truncate" title="Masked - turn the mask off (eye button) to edit" x-text="nm(l.item) || '—'"></span><button x-show="l.notes" type="button" @click.stop="showNote(l.item, l.notes)" class="note-btn shrink-0" title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button></div></td>
+                                <td class="td"><div class="flex items-center gap-1"><input x-show="!privacy" name="log-item" type="text" x-model="l.item" :class="bad('l', l, 'item')" aria-label="Description" placeholder="Description" class="inp"><span x-show="privacy" style="display:none" class="inp block truncate" title="Masked - turn the mask off (eye button) to edit" x-text="nm(l.item) || '—'"></span><button x-show="l.notes" type="button" @click.stop="showNote(l.item, l.notes, 'l', l)" class="note-btn shrink-0" title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button></div></td>
                                 <td class="td"><select name="log-commitmentid" x-model.number="l.commitmentId" @change="$nextTick(() => onLinkChange(l))" :class="bad('l', l, 'commitmentId')" aria-label="Linked commitment" class="inp"><option value="">— none —</option><template x-for="c in commitments.filter(x => !x._draft)" :key="c.id"><option :value="c.id" :selected="c.id === Number(l.commitmentId)" x-text="nm(c.name) + (c.archived ? ' (archived)' : '')"></option></template></select></td>
                                 <td class="td"><div class="relative" x-data="combo('categoryOptions')" x-modelable="value" x-model="l.category" x-bind="root"><input name="category" x-model="value" x-bind="field" aria-label="Category" placeholder="Category" class="inp !pr-7"><button x-bind="toggle" aria-label="Show category suggestions" class="absolute right-0 inset-y-0 px-2 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></td>
                                 <td class="td"><div class="relative" x-data="combo('methodOptions')" x-modelable="value" x-model="l.method" x-bind="root"><input name="method" x-model="value" x-bind="field" aria-label="Method" placeholder="Method" class="inp !pr-7"><button x-bind="toggle" aria-label="Show method suggestions" class="absolute right-0 inset-y-0 px-2 text-slate-400"><i class="fa-solid fa-chevron-down text-[10px]"></i></button><template x-if="open && list().length"><div class="combo-list" role="listbox"><template x-for="(o, k) in list()" :key="o"><button type="button" role="option" :aria-selected="k === hi ? 'true' : 'false'" @mousedown.prevent @click="pick(o)" class="combo-opt hover:bg-slate-800" x-text="o"></button></template></div></template></div></td>
@@ -617,25 +641,50 @@
                 </table></div></template>
         </div>
 
-        <!-- ======================= EVENTS & TASKS ======================= -->
+        <!-- ======================= EVENTS, TASKS & NOTES ======================= -->
         <div x-show="tab === 'events'" style="display:none" class="space-y-2 sm:space-y-3">
             <div class="card px-3 py-2 sm:p-4 flex items-center justify-between gap-2" data-nosave>
-                <div class="min-w-0"><h2 class="text-sm font-bold text-white truncate"><i class="fa-solid fa-calendar-check text-sky-400 mr-1"></i> Events &amp; Tasks</h2>
-                    <p class="hidden sm:block text-xs text-slate-400"><b>Event</b> = a day to remember (birthday, renewal). <b>Task</b> = something to tick off. Either can repeat every N days, weeks, months or years.</p></div>
+                <div class="min-w-0"><h2 class="text-sm font-bold text-white truncate"><i class="fa-solid fa-calendar-check text-sky-400 mr-1"></i> Events, Tasks &amp; Notes</h2>
+                    <p class="hidden sm:block text-xs text-slate-400"><b>Event</b> = a day to remember. <b>Task</b> = something to tick off. <b>Note</b> = free text, no date. Events and tasks can repeat every N days, weeks, months or years, with an optional end date.</p></div>
                 <div class="flex items-center gap-1.5 shrink-0">
-                    <button @click="addRow('e')" class="btn btn-sky" title="Add Event / Task" aria-label="Add Event / Task"><i class="fa-solid fa-plus"></i><span class="hidden sm:inline">Add Event / Task</span></button>
+                    <button x-show="!isDesktop" @click="showEvFilters = !showEvFilters" :aria-expanded="showEvFilters ? 'true' : 'false'" aria-label="Search and filters" title="Search and filters" class="btn btn-ghost !px-2.5 relative" :class="showEvFilters ? '!border-sky-500 !text-sky-300' : ''"><i class="fa-solid fa-magnifying-glass"></i><span x-show="activeEvFilters" class="absolute -top-1.5 -right-1.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-sky-600 text-onaccent text-[10px] leading-[1.1rem] text-center" x-text="activeEvFilters"></span></button>
+                    <button @click="addRow('e')" class="btn btn-sky" title="Add event, task or note" aria-label="Add event, task or note"><i class="fa-solid fa-plus"></i><span class="hidden sm:inline">Add</span></button>
                     <button @click="saveAll()" class="btn btn-em" title="Save DB" aria-label="Save DB"><i class="fa-solid fa-floppy-disk"></i><span class="hidden sm:inline">Save DB</span></button></div>
             </div>
-            <div data-nosave class="panel px-3 py-2 flex flex-wrap items-center gap-3 text-xs">
+
+            <!-- which kind -->
+            <div data-nosave class="flex flex-wrap items-center justify-between gap-2">
                 <div class="seg" role="group" aria-label="Show">
                     <button @click="ef = { ...ef, kind: 'All' }" :aria-pressed="ef.kind === 'All' ? 'true' : 'false'">All</button>
-                    <button @click="ef = { ...ef, kind: 'Event' }" :aria-pressed="ef.kind === 'Event' ? 'true' : 'false'"><i class="fa-solid fa-calendar-day mr-1"></i>Events</button>
-                    <button @click="ef = { ...ef, kind: 'Task' }" :aria-pressed="ef.kind === 'Task' ? 'true' : 'false'"><i class="fa-solid fa-list-check mr-1"></i>Tasks</button>
+                    <button @click="ef = { ...ef, kind: 'Event' }" :aria-pressed="ef.kind === 'Event' ? 'true' : 'false'"><i class="fa-solid fa-calendar-day mr-1"></i>Events <span x-text="'(' + evCounts.Event + ')'"></span></button>
+                    <button @click="ef = { ...ef, kind: 'Task' }" :aria-pressed="ef.kind === 'Task' ? 'true' : 'false'"><i class="fa-solid fa-list-check mr-1"></i>Tasks <span x-text="'(' + evCounts.Task + ')'"></span></button>
+                    <button @click="ef = { ...ef, kind: 'Note' }" :aria-pressed="ef.kind === 'Note' ? 'true' : 'false'" data-act="ev-notes"><i class="fa-solid fa-note-sticky mr-1"></i>Notes <span x-text="'(' + evCounts.Note + ')'"></span></button>
                 </div>
-                <label class="flex items-center gap-1.5 text-slate-300"><input name="ef-showdone" type="checkbox" x-model="ef.showDone" class="rounded bg-slate-950 border-slate-700"> Show done tasks</label>
-                <span class="text-slate-500" x-text="eRows.length + ' row(s)'"></span>
+                <div class="flex flex-wrap items-center gap-1.5 text-xs">
+                    <button @click="exportEventsCSV()" class="btn btn-ghost !py-1" title="Download the rows shown below as a CSV file" data-act="ev-export"><i class="fa-solid fa-file-csv"></i> Export <span class="font-normal" x-text="'(' + eRows.filter(e => !e._draft).length + ')'"></span></button>
+                    <label class="btn btn-ghost !py-1 cursor-pointer focus-within:ring-2 focus-within:ring-sky-500" title="Add many events, tasks or notes from a CSV file"><i class="fa-solid fa-file-import"></i> Import CSV<input name="import-events-csv" type="file" @change="importEventsCSV($event)" class="sr-only" accept=".csv,text/csv,text/plain" aria-label="Import events from a CSV file"></label>
+                    <button @click="eventsTemplateCSV()" class="text-[11px] text-sky-400 hover:underline" title="Download an example file to fill in">Example file</button>
+                </div>
             </div>
-            <p x-show="!eRows.length" class="text-center text-xs text-slate-500 py-8">Nothing here yet. Add a birthday, a renewal date or a task you repeat every day.</p>
+
+            <!-- search + filters: always shown on desktop, behind the search icon on phones -->
+            <div data-nosave x-show="isDesktop || showEvFilters" x-transition.opacity class="panel p-2 sm:p-3 grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs" data-ev-filters>
+                <input name="ef-q" type="search" x-model="ef.q" placeholder="Search title and notes…" aria-label="Search title and notes" class="inp col-span-2">
+                <select name="ef-status" x-model="ef.status" aria-label="Status" class="inp"><option value="All">All statuses</option><option value="Overdue">Overdue</option><option value="Today">Today</option><option value="Coming">Open / upcoming</option><option value="Done">Done</option><option value="Over">Ended / past</option></select>
+                <select name="ef-repeat" x-model="ef.repeat" aria-label="Repeats" class="inp"><option value="All">Any repeat</option><option value="None">Does not repeat</option><option value="Any">Repeats</option><option value="Day">Every N days</option><option value="Week">Every N weeks</option><option value="Month">Every N months</option><option value="Year">Every N years</option></select>
+                <div class="col-span-2 flex items-center gap-1" title="Show rows whose next date is in this range">
+                    <input type="date" name="ef-from" x-model="ef.from" aria-label="Next date from" class="inp" :class="ef.from && ef.to && ef.to < ef.from ? '!border-red-500' : ''">
+                    <span class="text-slate-500">–</span>
+                    <input type="date" name="ef-to" x-model="ef.to" aria-label="Next date to" class="inp" :class="ef.from && ef.to && ef.to < ef.from ? '!border-red-500' : ''">
+                </div>
+                <div class="col-span-2 sm:col-span-6 flex flex-wrap items-center justify-between gap-2">
+                    <label class="flex items-center gap-1.5 text-slate-300"><input name="ef-showdone" type="checkbox" x-model="ef.showDone" class="rounded bg-slate-950 border-slate-700"> Show done, ended and past</label>
+                    <span class="flex items-center gap-2"><span x-show="ef.from && ef.to && ef.to < ef.from" class="text-red-400">The end date is before the start date.</span>
+                        <button x-show="activeEvFilters" @click="resetEvFilters()" class="btn btn-ghost !py-1"><i class="fa-solid fa-rotate-left"></i> Reset</button></span>
+                </div>
+            </div>
+            <p class="text-[11px] text-slate-400" data-nosave x-text="eRows.length + ' row(s)' + (activeEvFilters ? ' match the filters' : '')"></p>
+            <p x-show="!eRows.length" class="text-center text-xs text-slate-500 py-8" x-text="activeEvFilters ? 'Nothing matches these filters.' : 'Nothing here yet. Add a birthday, a task you repeat every day, or a note.'"></p>
 
             <!-- Mobile / tablet: one card each; a task is ticked with the round button on the left -->
             <template x-if="!isDesktop"><div class="space-y-1.5">
@@ -643,37 +692,41 @@
                     <div class="card px-3 py-2 text-xs flex items-center gap-2.5" :data-row="e.id" :class="flashId === e.id ? 'ring-2 ring-sky-400' : ''">
                         <template x-if="e.kind === 'Task'"><button type="button" @click="toggleDone(e)" role="checkbox" :aria-checked="evDone(e) ? 'true' : 'false'" :aria-label="(evDone(e) ? 'Re-open ' : 'Mark done: ') + (e.title || 'task')" data-act="ev-done"
                                 class="shrink-0 w-8 h-8 rounded-full border-2 grid place-items-center transition" :class="evDone(e) ? 'bg-emerald-600 border-emerald-600 text-onaccent' : 'border-slate-500 text-transparent hover:border-emerald-500'"><i class="fa-solid fa-check text-xs"></i></button></template>
-                        <template x-if="e.kind !== 'Task'"><span class="shrink-0 w-8 h-8 rounded-full bg-sky-500/10 text-sky-400 grid place-items-center"><i class="fa-solid fa-calendar-day text-xs"></i></span></template>
+                        <template x-if="e.kind === 'Event'"><span class="shrink-0 w-8 h-8 rounded-full bg-sky-500/10 text-sky-400 grid place-items-center"><i class="fa-solid fa-calendar-day text-xs"></i></span></template>
+                        <template x-if="e.kind === 'Note'"><span class="shrink-0 w-8 h-8 rounded-full bg-purple-500/10 text-purple-300 grid place-items-center"><i class="fa-solid fa-note-sticky text-xs"></i></span></template>
                         <div class="flex-1 min-w-0 cursor-pointer" role="button" tabindex="0" @click="openModal('e', e)" @keydown.enter.prevent="openModal('e', e)" :aria-label="'Edit ' + (e.title || 'row')">
-                            <p class="font-semibold text-white text-sm truncate" :class="evDone(e) ? 'line-through opacity-60' : ''" x-text="e.title || 'Untitled'"></p>
-                            <p class="text-slate-400 truncate" x-text="evSub(e)"></p>
+                            <p class="font-semibold text-white text-sm truncate" :class="evClosed(e) ? 'line-through opacity-60' : ''" x-text="e.title || 'Untitled'"></p>
+                            <p class="text-slate-400" :class="e.kind === 'Note' ? 'line-clamp-2 break-words' : 'truncate'" x-text="evSub(e)"></p>
                             <p x-show="errList('e', e).length" class="text-[11px] text-red-400" x-text="errList('e', e).join(' • ')"></p>
                         </div>
-                        <button x-show="e.notes" type="button" @click.stop="showNote(e.title, e.notes)" class="note-btn shrink-0" title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button>
-                        <span class="badge shrink-0" :class="evClass(e)" x-text="evState(e)"></span>
+                        <button x-show="e.kind !== 'Note'" type="button" @click.stop="showNote(e.title, e.notes, 'e', e)" class="note-btn shrink-0" :class="e.notes ? '' : 'opacity-40'" :title="e.notes ? 'View / edit note' : 'Add a note'" :aria-label="e.notes ? 'View or edit note' : 'Add a note'" data-act="ev-note"><i class="fa-solid fa-note-sticky"></i></button>
+                        <span x-show="e.kind !== 'Note'" class="badge shrink-0" :class="evClass(e)" x-text="evState(e)"></span>
                     </div>
                 </template>
             </div></template>
 
             <!-- Desktop: one line per row, inline-editable -->
             <template x-if="isDesktop"><div class="card">
-                <table class="grid-tbl w-full table-fixed text-xs"><colgroup><col class="w-[4%]"><col class="w-[5%]"><col class="w-[10%]"><col class="w-[27%]"><col class="w-[13%]"><col class="w-[18%]"><col class="w-[16%]"><col class="w-[7%]"></colgroup>
-                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th">#</th><th class="th">Done</th><th class="th">Kind</th><th class="th">Title</th><th class="th">Date</th><th class="th">Repeats every</th><th class="th">Status · next date</th><th class="th"><span class="sr-only">Actions</span></th></tr></thead>
+                <table class="grid-tbl w-full table-fixed text-xs"><colgroup><col class="w-[3%]"><col class="w-[4%]"><col class="w-[9%]"><col class="w-[25%]"><col class="w-[12%]"><col class="w-[16%]"><col class="w-[12%]"><col class="w-[13%]"><col class="w-[6%]"></colgroup>
+                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th">#</th><th class="th">Done</th><th class="th">Kind</th><th class="th">Title · note</th><th class="th">Date</th><th class="th">Repeats every</th><th class="th">End date</th><th class="th">Status · next</th><th class="th"><span class="sr-only">Actions</span></th></tr></thead>
                     <tbody class="divide-y divide-slate-800/70">
                         <template x-for="(e, i) in eRows" :key="e.id">
                             <tr :data-row="e.id" class="hover:bg-slate-800/30" :class="[e._draft ? 'bg-sky-950/30' : '', flashId === e.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
                                 <td class="td"><span class="rowno" x-text="i + 1"></span></td>
                                 <td class="td"><button x-show="e.kind === 'Task' && !e._draft" type="button" @click="toggleDone(e)" role="checkbox" :aria-checked="evDone(e) ? 'true' : 'false'" :title="evDone(e) ? 'Re-open' : 'Mark done'" :aria-label="evDone(e) ? 'Re-open' : 'Mark done'" data-nosave data-act="ev-done"
                                         class="w-6 h-6 rounded-full border-2 grid place-items-center transition" :class="evDone(e) ? 'bg-emerald-600 border-emerald-600 text-onaccent' : 'border-slate-500 text-transparent hover:border-emerald-500'"><i class="fa-solid fa-check text-[10px]"></i></button></td>
-                                <td class="td"><select name="e-kind" x-model="e.kind" aria-label="Kind" class="inp"><option>Event</option><option>Task</option></select></td>
-                                <td class="td"><div class="flex items-center gap-1"><input name="e-title" type="text" x-model="e.title" :class="bad('e', e, 'title')" :style="evDone(e) ? 'text-decoration:line-through;opacity:.6' : ''" aria-label="Title" placeholder="Title" class="inp"><button x-show="e.notes" type="button" @click.stop="showNote(e.title, e.notes)" class="note-btn shrink-0" title="View note" aria-label="View note"><i class="fa-solid fa-note-sticky"></i></button></div></td>
-                                <td class="td"><input name="e-eventdate" type="date" x-model="e.eventDate" :class="bad('e', e, 'eventDate')" aria-label="Date" :title="e.repeatUnit !== 'None' && evNext(e) ? 'First date. Next: ' + fmtDate(evNext(e)) : 'Date'" class="inp"></td>
-                                <td class="td"><div class="flex gap-1"><input x-show="e.repeatUnit !== 'None'" name="e-repeatevery" type="number" inputmode="numeric" min="1" max="120" step="1" x-model.number="e.repeatEvery" :class="bad('e', e, 'repeatEvery')" aria-label="Repeat interval" title="Every how many" class="inp nospin !w-10 flex-none text-center tabular-nums !px-0.5">
-                                    <select name="e-repeatunit" x-model="e.repeatUnit" @change="$nextTick(() => onRepeatChange(e))" aria-label="Repeat unit" class="inp flex-[4]"><option value="None">Does not repeat</option><option value="Day" x-text="Number(e.repeatEvery) > 1 ? 'days' : 'day'"></option><option value="Week" x-text="Number(e.repeatEvery) > 1 ? 'weeks' : 'week'"></option><option value="Month" x-text="Number(e.repeatEvery) > 1 ? 'months' : 'month'"></option><option value="Year" x-text="Number(e.repeatEvery) > 1 ? 'years' : 'year'"></option></select></div></td>
-                                <td class="td"><span class="flex items-center gap-1.5 min-w-0" :title="evSub(e)"><span class="badge" :class="evClass(e)" x-text="evState(e)"></span><span class="text-slate-400 truncate" x-text="shortDate(evNext(e))"></span><span x-show="errList('e', e).length" :title="errList('e', e).join(', ')" class="text-red-400"><i class="fa-solid fa-triangle-exclamation"></i></span></span></td>
+                                <td class="td"><select name="e-kind" x-model="e.kind" @change="$nextTick(() => onKindChange(e))" aria-label="Kind" class="inp"><option>Event</option><option>Task</option><option>Note</option></select></td>
+                                <td class="td"><div class="flex items-center gap-1"><input name="e-title" type="text" x-model="e.title" :class="bad('e', e, 'title')" :style="evClosed(e) ? 'text-decoration:line-through;opacity:.6' : ''" aria-label="Title" placeholder="Title" class="inp">
+                                    <button type="button" @click.stop="showNote(e.title, e.notes, 'e', e)" class="note-btn shrink-0" :class="e.notes ? '' : 'opacity-40'" :title="e.notes ? notePreview(e, 300) : 'Add a note'" :aria-label="e.notes ? 'View or edit note' : 'Add a note'" data-nosave data-act="ev-note"><i class="fa-solid fa-note-sticky"></i></button></div></td>
+                                <td class="td"><input x-show="e.kind !== 'Note'" name="e-eventdate" type="date" x-model="e.eventDate" :class="bad('e', e, 'eventDate')" aria-label="Date" :title="e.repeatUnit !== 'None' && evNext(e) ? 'First date. Next: ' + fmtDate(evNext(e)) : 'Date'" class="inp"></td>
+                                <td class="td"><div x-show="e.kind !== 'Note'" class="flex gap-1"><input x-show="e.repeatUnit !== 'None'" name="e-repeatevery" type="number" inputmode="numeric" min="1" max="120" step="1" x-model.number="e.repeatEvery" :class="bad('e', e, 'repeatEvery')" aria-label="Repeat interval" title="Every how many" class="inp nospin !w-10 flex-none text-center tabular-nums !px-0.5">
+                                    <select name="e-repeatunit" x-model="e.repeatUnit" @change="$nextTick(() => onRepeatChange(e))" aria-label="Repeat unit" class="inp flex-[4]"><option value="None">Does not repeat</option><option value="Day" x-text="Number(e.repeatEvery) > 1 ? 'days' : 'day'"></option><option value="Week" x-text="Number(e.repeatEvery) > 1 ? 'weeks' : 'week'"></option><option value="Month" x-text="Number(e.repeatEvery) > 1 ? 'months' : 'month'"></option><option value="Year" x-text="Number(e.repeatEvery) > 1 ? 'years' : 'year'"></option></select></div>
+                                    <button x-show="e.kind === 'Note'" type="button" @click="showNote(e.title, e.notes, 'e', e)" class="block w-full text-left truncate text-slate-400 hover:text-slate-200" data-nosave x-text="notePreview(e, 60) || 'Empty note - click to write'"></button></td>
+                                <td class="td"><input x-show="e.kind !== 'Note' && e.repeatUnit !== 'None'" name="e-enddate" type="date" x-model="e.endDate" :class="bad('e', e, 'endDate')" aria-label="End date (optional)" title="Last day of the series - leave empty for no end" class="inp"><span x-show="e.kind !== 'Note' && e.repeatUnit === 'None'" class="text-slate-600 pl-2">—</span></td>
+                                <td class="td"><span class="flex items-center gap-1.5 min-w-0" :title="e.kind === 'Note' ? '' : evSub(e)"><span class="badge" :class="evClass(e)" x-text="evState(e)"></span><span class="text-slate-400 truncate" x-text="e.kind === 'Note' ? '' : shortDate(evNext(e))"></span><span x-show="errList('e', e).length" :title="errList('e', e).join(', ')" class="text-red-400"><i class="fa-solid fa-triangle-exclamation"></i></span></span></td>
                                 <td class="td"><div class="flex items-center justify-end">
                                     <template x-if="e._draft"><span class="flex"><button @click="saveRow('e', e)" class="text-sky-400 hover:text-sky-300 p-1" title="Save row" aria-label="Save row"><i class="fa-solid fa-check"></i></button><button @click="deleteRow('e', e)" class="text-slate-400 hover:text-white p-1" aria-label="Discard draft" title="Discard"><i class="fa-solid fa-xmark"></i></button></span></template>
-                                    <template x-if="!e._draft"><span class="flex"><button @click="openModal('e', e)" title="Edit (notes…)" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1"><i class="fa-solid fa-pen"></i></button><button @click="deleteRow('e', e)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1"><i class="fa-solid fa-trash"></i></button></span></template></div></td>
+                                    <template x-if="!e._draft"><span class="flex"><button @click="openModal('e', e)" title="Edit" aria-label="Edit" class="text-sky-400 hover:text-sky-300 p-1"><i class="fa-solid fa-pen"></i></button><button @click="deleteRow('e', e)" title="Delete" aria-label="Delete" class="text-slate-400 hover:text-red-400 p-1"><i class="fa-solid fa-trash"></i></button></span></template></div></td>
                             </tr>
                         </template>
                     </tbody>
@@ -791,7 +844,7 @@
         <template x-if="modal.show && modal.item">
             <div class="sheet bg-slate-900 border border-slate-700 w-full sm:max-w-xl rounded-t-3xl sm:rounded-3xl flex flex-col shadow-2xl">
                 <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-                    <h3 class="font-bold text-white text-sm" x-text="(modal.isNew ? 'Add ' : 'Edit ') + ({ c: 'commitment', l: 'expense row', e: 'event / task' })[modal.kind]"></h3>
+                    <h3 class="font-bold text-white text-sm" x-text="(modal.isNew ? 'Add ' : 'Edit ') + ({ c: 'commitment', l: 'expense row', e: (modal.item.kind || 'event').toLowerCase() })[modal.kind]"></h3>
                     <button @click="closeModal()" aria-label="Close" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
                 </div>
                 <div class="overflow-y-auto px-5 py-4 grid grid-cols-2 gap-3 text-xs">
@@ -831,14 +884,17 @@
                     <!-- event / task -->
                     <template x-if="modal.kind === 'e'"><div class="contents">
                         <div class="col-span-2"><label class="lbl">Title *</label><input name="title" type="text" x-model="modal.item.title" :class="bad('e', modal.item, 'title')" class="inp"></div>
-                        <div><label class="lbl">Kind</label><select name="kind" x-model="modal.item.kind" class="inp"><option>Event</option><option>Task</option></select></div>
-                        <div><label class="lbl">Date *</label><input name="eventdate" type="date" x-model="modal.item.eventDate" :class="bad('e', modal.item, 'eventDate')" class="inp"></div>
-                        <div class="col-span-2"><label class="lbl">Repeats</label><div class="flex items-center gap-1">
-                            <span x-show="modal.item.repeatUnit !== 'None'" class="text-slate-400 shrink-0">every</span>
-                            <input x-show="modal.item.repeatUnit !== 'None'" name="repeatevery" type="number" inputmode="numeric" min="1" max="120" step="1" x-model.number="modal.item.repeatEvery" :class="bad('e', modal.item, 'repeatEvery')" aria-label="Repeat interval" class="inp !w-16 text-center tabular-nums">
-                            <select name="repeatunit" x-model="modal.item.repeatUnit" @change="onRepeatChange(modal.item)" aria-label="Repeat unit" class="inp"><option value="None">Does not repeat</option><option value="Day" x-text="Number(modal.item.repeatEvery) > 1 ? 'days' : 'day'"></option><option value="Week" x-text="Number(modal.item.repeatEvery) > 1 ? 'weeks' : 'week'"></option><option value="Month" x-text="Number(modal.item.repeatEvery) > 1 ? 'months' : 'month'"></option><option value="Year" x-text="Number(modal.item.repeatEvery) > 1 ? 'years' : 'year'"></option></select></div>
-                            <p class="text-[10px] text-slate-500 mt-1" x-text="modal.item.kind === 'Task' ? (modal.item.repeatUnit === 'None' ? 'Tick it off once and it is done.' : 'Tick it off each time; it opens again on its next date.') : (modal.item.repeatUnit === 'None' ? 'Shown until its date has passed.' : 'Always shows the next date, counted from the date above.')"></p></div>
-                        <div class="col-span-2"><label class="lbl">Notes</label><textarea name="notes" rows="2" x-model="modal.item.notes" class="inp"></textarea></div>
+                        <div :class="modal.item.kind === 'Note' ? 'col-span-2' : ''"><label class="lbl">Kind</label><select name="kind" x-model="modal.item.kind" @change="$nextTick(() => onKindChange(modal.item))" class="inp"><option value="Event">Event - a day to remember</option><option value="Task">Task - something to tick off</option><option value="Note">Note - text only, no date</option></select></div>
+                        <template x-if="modal.item.kind !== 'Note'"><div class="contents">
+                            <div><label class="lbl">Date *</label><input name="eventdate" type="date" x-model="modal.item.eventDate" :class="bad('e', modal.item, 'eventDate')" class="inp"></div>
+                            <div class="col-span-2"><label class="lbl">Repeats</label><div class="flex items-center gap-1">
+                                <span x-show="modal.item.repeatUnit !== 'None'" class="text-slate-400 shrink-0">every</span>
+                                <input x-show="modal.item.repeatUnit !== 'None'" name="repeatevery" type="number" inputmode="numeric" min="1" max="120" step="1" x-model.number="modal.item.repeatEvery" :class="bad('e', modal.item, 'repeatEvery')" aria-label="Repeat interval" class="inp !w-16 text-center tabular-nums">
+                                <select name="repeatunit" x-model="modal.item.repeatUnit" @change="onRepeatChange(modal.item)" aria-label="Repeat unit" class="inp"><option value="None">Does not repeat</option><option value="Day" x-text="Number(modal.item.repeatEvery) > 1 ? 'days' : 'day'"></option><option value="Week" x-text="Number(modal.item.repeatEvery) > 1 ? 'weeks' : 'week'"></option><option value="Month" x-text="Number(modal.item.repeatEvery) > 1 ? 'months' : 'month'"></option><option value="Year" x-text="Number(modal.item.repeatEvery) > 1 ? 'years' : 'year'"></option></select></div>
+                                <p class="text-[10px] text-slate-500 mt-1" x-text="modal.item.kind === 'Task' ? (modal.item.repeatUnit === 'None' ? 'Tick it off once and it is done.' : 'Tick it off each time; it opens again on its next date.') : (modal.item.repeatUnit === 'None' ? 'Shown until its date has passed.' : 'Always shows the next date, counted from the date above.')"></p></div>
+                            <template x-if="modal.item.repeatUnit !== 'None'"><div class="col-span-2"><label class="lbl">End date (empty = no end)</label><input name="eventenddate" type="date" x-model="modal.item.endDate" :class="bad('e', modal.item, 'endDate')" class="inp"><p class="text-[10px] text-slate-500 mt-1">The last day it can fall on. After that it shows as Ended and leaves the reminders.</p></div></template>
+                        </div></template>
+                        <div class="col-span-2"><label class="lbl" x-text="modal.item.kind === 'Note' ? 'Text' : 'Notes'"></label><textarea name="notes" :rows="modal.item.kind === 'Note' ? 12 : 5" x-model="modal.item.notes" placeholder="As many lines as you like…" class="inp !text-sm leading-relaxed resize-y"></textarea></div>
                     </div></template>
                 </div>
                 <div class="px-5 py-4 border-t border-slate-800 flex flex-wrap gap-2 justify-end">
@@ -885,12 +941,40 @@
         </div>
     </div>
 
-    <!-- Note viewer (small icon next to a name opens it) -->
-    <div x-show="note.show" style="display:none" @click.self="note.show = false" @keydown.escape.window="note.show && (note.show = false)" class="fixed inset-0 z-[55] flex items-end sm:items-center justify-center bg-slate-950/60 p-3" role="dialog" aria-modal="true" aria-label="Note">
-        <div class="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl p-4 space-y-2">
+    <!-- Note viewer / editor (the note icon next to a name opens it) -->
+    <div x-show="note.show" style="display:none" @click.self="note.show = false" @keydown.escape.window="note.show && (note.show = false)" class="fixed inset-0 z-[55] flex items-end sm:items-center justify-center bg-slate-950/60 p-3" role="dialog" aria-modal="true" aria-label="Note" data-note-dialog>
+        <div class="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl p-4 space-y-3">
             <div class="flex items-start justify-between gap-3"><h3 class="font-bold text-white text-sm min-w-0 break-words"><i class="fa-solid fa-note-sticky text-amber-400 mr-1"></i> <span x-text="note.title"></span></h3>
                 <button @click="note.show = false" class="text-slate-400 hover:text-white" aria-label="Close note"><i class="fa-solid fa-xmark"></i></button></div>
-            <p class="text-xs text-slate-200 whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto" x-text="note.text"></p>
+            <template x-if="note.show && note.row"><div class="space-y-3">
+                <textarea name="note-text" x-model="note.draft" rows="10" aria-label="Note text" placeholder="Write as many lines as you like…" class="inp !text-sm leading-relaxed resize-y min-h-[9rem] max-h-[60vh]" @keydown.ctrl.enter="saveNote()" @keydown.meta.enter="saveNote()"></textarea>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="text-[10px] text-slate-500" x-text="note.draft.length + ' characters · ' + (note.draft ? note.draft.split('\n').length : 0) + ' line(s)'"></span>
+                    <span class="flex gap-2"><button @click="note.show = false" class="btn btn-ghost">Cancel</button><button @click="saveNote()" class="btn btn-sky" data-act="note-save"><i class="fa-solid fa-floppy-disk"></i> Save note</button></span>
+                </div>
+            </div></template>
+            <template x-if="note.show && !note.row"><p class="text-xs text-slate-200 whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto" x-text="note.text"></p></template>
+        </div>
+    </div>
+
+    <!-- Import events from CSV: what was read, what was skipped and why; nothing is added until confirmed -->
+    <div x-show="evImport.show" style="display:none" @click.self="evImport.show = false" @keydown.escape.window="evImport.show && (evImport.show = false)" class="fixed inset-0 z-[55] flex items-end sm:items-center justify-center bg-slate-950/60 p-3" role="dialog" aria-modal="true" aria-label="Import events from CSV" data-import-dialog>
+        <div class="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl p-4 space-y-3 text-xs">
+            <div class="flex items-start justify-between gap-3"><h3 class="font-bold text-white text-sm min-w-0 break-words"><i class="fa-solid fa-file-import text-sky-400 mr-1"></i> Import from <span x-text="evImport.name"></span></h3>
+                <button @click="evImport.show = false" class="text-slate-400 hover:text-white" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></div>
+            <p class="text-slate-200"><b class="text-emerald-400" x-text="evImport.rows.length"></b> row(s) ready to add<span x-show="evImport.dupes" x-text="' · ' + evImport.dupes + ' already in the tracker (left out)'"></span><span x-show="evImport.skipped.length" class="text-amber-300" x-text="' · ' + evImport.skipped.length + ' could not be read'"></span><span x-show="evImport.over" class="text-amber-300" x-text="' · ' + evImport.over + ' beyond the 2,000-row limit (left out)'"></span>.</p>
+            <div x-show="evImport.rows.length" class="max-h-40 overflow-y-auto space-y-1">
+                <template x-for="(r, i) in evImport.rows.slice(0, 50)" :key="i">
+                    <p class="flex justify-between gap-2 bg-slate-950/60 border border-slate-800/80 rounded-lg px-2 py-1"><span class="min-w-0 truncate text-white"><span class="badge bg-slate-700/60 text-slate-300 mr-1" x-text="r.kind"></span><span x-text="r.title"></span></span><span class="shrink-0 text-slate-400" x-text="r.kind === 'Note' ? '' : fmtDate(r.eventDate) + (r.repeatUnit !== 'None' ? ' · ' + evRepeat(r).toLowerCase() : '')"></span></p>
+                </template>
+                <p x-show="evImport.rows.length > 50" class="text-slate-500" x-text="'… and ' + (evImport.rows.length - 50) + ' more'"></p>
+            </div>
+            <div x-show="evImport.skipped.length" class="max-h-32 overflow-y-auto space-y-0.5 text-amber-300">
+                <template x-for="(k, i) in evImport.skipped.slice(0, 50)" :key="i"><p x-text="'Line ' + k.line + ': ' + k.reason"></p></template>
+            </div>
+            <p class="text-[10px] text-slate-500">Rows are added to what you already have; nothing is replaced. Columns: Title, Kind (Event / Task / Note), Date, Repeat (None / Day / Week / Month / Year), Every, End date, Notes. Dates as 2026-11-15 or 15/11/2026.</p>
+            <div class="flex justify-end gap-2"><button @click="evImport.show = false" class="btn btn-ghost">Cancel</button>
+                <button @click="confirmEvImport()" :disabled="!evImport.rows.length" class="btn btn-sky disabled:opacity-40" data-act="import-confirm"><i class="fa-solid fa-check"></i> <span x-text="'Add ' + evImport.rows.length + ' row(s)'"></span></button></div>
         </div>
     </div>
 
@@ -919,7 +1003,7 @@
             <span>Expense Log</span>
         </button>
         <button @click="tab = 'events'" :class="tab === 'events' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">
-            <i class="fa-solid fa-calendar-check text-base mb-0.5"></i>
+            <span class="relative"><i class="fa-solid fa-calendar-check text-base mb-0.5"></i><span x-show="reminders.n" style="display:none" class="absolute -top-1.5 -right-2.5 min-w-[1rem] h-4 px-1 rounded-full bg-amber-500 text-slate-950 text-[9px] font-bold leading-4 text-center" x-text="reminders.n"></span></span>
             <span>Events</span>
         </button>
         <button @click="tab = 'settings'" :class="tab === 'settings' ? 'text-sky-400' : 'text-slate-400'" class="flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-medium">

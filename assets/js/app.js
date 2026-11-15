@@ -37,6 +37,12 @@
     const DUE_RANGES = [['window', 'This dashboard window'], ['month', 'Today → end of this month'], ['d7', 'Next 7 days'], ['d14', 'Next 14 days'], ['d30', 'Next 30 days'], ['d60', 'Next 60 days'], ['d90', 'Next 90 days']];
     const DUE_STATUS = ['All', 'Unpaid', 'Overdue', 'Pending', 'Paid', 'Paused', 'Skipped'];
     const BLANK_DUEF = () => ({ q: '', cat: 'All', cid: 'All', min: '', max: '', overdue: false, curs: [] });      // curs: [] = every currency
+    const BLANK_EF = () => ({ q: '', kind: 'All', status: 'All', repeat: 'All', from: '', to: '', showDone: true });
+    // Status filter of the Events tab: one choice covers the matching task and event states.
+    const EV_STATUS = { All: null, Overdue: ['Overdue'], Today: ['Due today', 'Today'], Coming: ['Open', 'Upcoming'], Done: ['Done'], Over: ['Ended', 'Past'] };
+    // CSV writing. Text that a spreadsheet would run as a formula is prefixed with ' ; quotes, commas and line breaks are quoted.
+    const csvCell = v => { if (v === null || v === undefined) return ''; let s = String(v); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const csvSave = (rows, name) => download(new Blob(['\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), name);
     const download = (blob, name) => {
         const url = URL.createObjectURL(blob), a = document.createElement('a');
         a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500);
@@ -103,12 +109,12 @@
             ls: [{ col: 'actualDate', dir: 'desc' }, { col: 'amount', dir: 'desc' }, { col: '', dir: 'asc' }],
             sortCols: [['actualDate', 'Actual date'], ['commitmentDate', 'Commitment date'], ['item', 'Description'], ['category', 'Category'], ['amount', 'Amount'], ['currency', 'Currency'], ['method', 'Method'], ['linked', 'Linked']],
             lPage: 0, lPageSize: 25, lStale: false,
-            ef: { kind: 'All', showDone: true },
+            ef: BLANK_EF(), showEvFilters: false, evImport: { show: false, name: '', rows: [], skipped: [], dupes: 0 },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '6.1.0',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '7.0.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
-            dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
+            dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '', draft: '', k: '', row: null },
             loading: true, loadError: '', saveState: 'saved', isDesktop: true,
             _saveTimer: null, _toastTimer: null, _logTimer: null,
             fmtDate: C.fmtDate, fmtAmt, parseAmt,
@@ -220,7 +226,7 @@
                 const R = t => C.rowsOf(db, `SELECT * FROM ${t} ORDER BY id`).map(clean);
                 this.commitments = R('commitments').map(r => ({ ...r, amount: C.toMoney(r.amount), every: C.everyOf(r), dueDay: C.toInt(r.dueDay) ?? '', dueMonth: C.toInt(r.dueMonth) ?? '', pausedMonth: C.isMonthKey(r.pausedMonth) ? r.pausedMonth : '', archived: r.archived ? 1 : 0 }));
                 this.expenseLogs = R('expense_logs').map(r => ({ ...r, amount: C.toMoney(r.amount), commitmentId: C.toInt(r.commitmentId) ?? '' }));
-                this.events = R('events').map(r => ({ ...r, repeatUnit: C.ENUMS.repeatUnit.includes(r.repeatUnit) ? r.repeatUnit : 'None', repeatEvery: C.toInt(r.repeatEvery) || 1, doneDate: C.validISO(r.doneDate) ? r.doneDate : '' }));
+                this.events = R('events').map(r => ({ ...r, repeatUnit: C.ENUMS.repeatUnit.includes(r.repeatUnit) ? r.repeatUnit : 'None', repeatEvery: C.toInt(r.repeatEvery) || 1, endDate: C.validISO(r.endDate) ? r.endDate : '', doneDate: C.validISO(r.doneDate) ? r.doneDate : '' }));
                 try { this.skips = C.rowsOf(db, 'SELECT commitmentId, commitmentDate FROM skips').filter(k => C.toInt(k.commitmentId) && C.validISO(k.commitmentDate)); } catch (e) { this.skips = []; }
                 this.selectedRowIds = []; this.lSel = []; this.dueSel = []; this.dueOpen = '';
                 this.loadSettings();
@@ -531,7 +537,14 @@
             },
             clearSelection() { this.selectedRowIds = []; },
             daysTo(d) { return C.daysBetween(this.today, d); },
-            showNote(title, text) { this.note = { show: true, title: title || 'Note', text: String(text || '') }; },
+            // Note viewer / editor. With a row (k = c | l | e) the text can be changed and is saved straight away.
+            showNote(title, text, k, row) { const t = String(text || ''); this.note = { show: true, title: title || 'Note', text: t, draft: t, k: k || '', row: row || null }; },
+            saveNote() {
+                const n = this.note, row = n.row; if (!row) { n.show = false; return; }
+                row.notes = n.draft; this.rev++; n.show = false;
+                if (row._draft) return;                                   // a new row is saved with "Save row"
+                if (this.save([opRow(TABLE[n.k], row)])) this.showToast('Note saved.');
+            },
             get selectedTotalsDisplay() { return this.fmtMap(this.sumBy(this.selectedItems)).replace(/\n/g, ' + '); },
             flash(id) { this.flashId = id; this.$nextTick(() => { const el = document.querySelector(`[data-row="${id}"]`); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }); setTimeout(() => { if (this.flashId === id) this.flashId = null; }, 2200); },
 
@@ -540,7 +553,7 @@
                 const t = this.today;
                 return k === 'c' ? { name: '', category: '', amount: '', currency: 'AED', frequency: 'Monthly', every: 1, dueDay: C.ymd(t)[2], dueMonth: '', startDate: t, endDate: '', method: '', notes: '', pausedMonth: '', archived: 0 }
                     : k === 'l' ? { actualDate: t, commitmentDate: '', commitmentId: '', category: '', item: '', amount: '', currency: 'AED', method: '', notes: '' }
-                        : { title: '', kind: 'Event', eventDate: t, repeatUnit: 'None', repeatEvery: 1, doneDate: '', notes: '' };
+                        : { title: '', kind: 'Event', eventDate: t, repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: '' };
             },
             arrOf(k) { return k === 'c' ? 'commitments' : k === 'l' ? 'expenseLogs' : 'events'; },
             // Desktop: inline draft pinned on top (never sorted). Mobile: full-screen form, row is created on Save.
@@ -864,21 +877,38 @@
             /* ============================== events & tasks ============================== */
             evState(e) { return C.eventState(e, this.today); },
             evNext(e) { return C.nextEventDate(e, this.today); },
-            evClass(e) { return { Overdue: 'bg-red-500/10 text-red-400', Done: 'bg-emerald-500/10 text-emerald-400', 'Due today': 'bg-amber-500/10 text-amber-400', Today: 'bg-amber-500/10 text-amber-400', Open: 'bg-sky-500/10 text-sky-300', Upcoming: 'bg-sky-500/10 text-sky-300', Past: 'bg-slate-500/20 text-slate-400' }[this.evState(e)] || 'bg-slate-500/20 text-slate-300'; },
+            evClass(e) { return { Overdue: 'bg-red-500/10 text-red-400', Done: 'bg-emerald-500/10 text-emerald-400', 'Due today': 'bg-amber-500/10 text-amber-400', Today: 'bg-amber-500/10 text-amber-400', Open: 'bg-sky-500/10 text-sky-300', Upcoming: 'bg-sky-500/10 text-sky-300', Past: 'bg-slate-500/20 text-slate-400', Ended: 'bg-slate-500/20 text-slate-400', Note: 'bg-purple-500/10 text-purple-300' }[this.evState(e)] || 'bg-slate-500/20 text-slate-300'; },
             evDone(e) { return C.eventDone(e, this.today); },
+            evClosed(e) { return C.eventClosed(e, this.today); },
             evRepeat(e) { return C.repeatLabel(e); },
-            evSub(e) {            // second line of a card: date + how it repeats
+            notePreview(e, max = 140) { const t = String(e.notes || '').replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max) + '…' : t; },
+            evSub(e) {            // second line of a card: date + how it repeats (a note shows the start of its text)
+                if (e.kind === 'Note') return this.notePreview(e) || 'Empty note';
                 const n = this.evNext(e) || e.eventDate, d = C.validISO(n) ? C.daysBetween(this.today, n) : null;
                 const when = d === null ? '' : d === 0 ? 'today' : d === 1 ? 'tomorrow' : d > 1 ? `in ${d} days` : d === -1 ? 'yesterday' : `${-d} days ago`;
                 return [C.fmtDate(n), when, e.repeatUnit !== 'None' ? C.repeatLabel(e).toLowerCase() : ''].filter(Boolean).join(' · ');
             },
-            sortedEventIds() {
-                const f = this.ef, t = this.today, done = e => (C.eventDone(e, t) ? 1 : 0);
-                return this.events.filter(e => !e._draft && (f.kind === 'All' || e.kind === f.kind) && (f.showDone || !done(e)))
-                    .sort((a, b) => (done(a) - done(b)) || ((C.nextEventDate(a, t) || '9999').localeCompare(C.nextEventDate(b, t) || '9999')) || (a.title || '').localeCompare(b.title || '')).map(e => e.id);
+            // Search (title + notes), kind, status, how it repeats, and a range for the date it is next about.
+            evMatch(e) {
+                const f = this.ef, t = this.today, q = f.q.trim().toLowerCase(), st = EV_STATUS[f.status];
+                if (f.kind !== 'All' && e.kind !== f.kind) return false;
+                if (!f.showDone && C.eventClosed(e, t)) return false;
+                if (q && !((e.title || '') + '\n' + (e.notes || '')).toLowerCase().includes(q)) return false;
+                if (st && !st.includes(C.eventState(e, t))) return false;
+                if (f.repeat !== 'All' && (e.kind === 'Note' || (f.repeat === 'Any' ? e.repeatUnit === 'None' : e.repeatUnit !== f.repeat))) return false;
+                if (C.validISO(f.from) || C.validISO(f.to)) { const n = C.nextEventDate(e, t); if (!n || (C.validISO(f.from) && n < f.from) || (C.validISO(f.to) && n > f.to)) return false; }
+                return true;
+            },
+            get activeEvFilters() { const f = this.ef; return (f.q.trim() ? 1 : 0) + ['kind', 'status', 'repeat'].filter(k => f[k] !== 'All').length + (f.from || f.to ? 1 : 0) + (f.showDone ? 0 : 1); },
+            resetEvFilters() { this.ef = BLANK_EF(); },
+            sortedEventIds() {           // open items by date, then closed ones (done / ended / past), then notes by title
+                const t = this.today, rank = e => (e.kind === 'Note' ? 2 : C.eventClosed(e, t) ? 1 : 0);
+                return this.events.filter(e => !e._draft && this.evMatch(e))
+                    .sort((a, b) => (rank(a) - rank(b)) || ((C.nextEventDate(a, t) || '9999').localeCompare(C.nextEventDate(b, t) || '9999')) || (a.title || '').localeCompare(b.title || '')).map(e => e.id);
             },
             refreshEvents() { this.rev++; const drafts = this.events.filter(e => e._draft).map(e => e.id).reverse(); this.eView = [...drafts, ...this.sortedEventIds()]; },
             get eRows() { const m = new Map(this.events.map(e => [e.id, e])); return this.eView.map(id => m.get(id)).filter(Boolean); },
+            get evCounts() { const m = { Event: 0, Task: 0, Note: 0 }; this.events.forEach(e => { if (!e._draft && m[e.kind] !== undefined) m[e.kind]++; }); return m; },
             // Ticking a task marks its CURRENT date as done. A repeating task opens again by itself on its next date.
             toggleDone(e) {
                 if (e._draft) { this.showToast('Save the row first, then tick it off.', 'info'); return; }
@@ -887,16 +917,90 @@
                 if (!this.save([['UPDATE events SET doneDate = ? WHERE id = ?', [e.doneDate || null, Number(e.id)]]])) return;
                 this.showToast(was ? 'Task re-opened.' : (e.repeatUnit !== 'None' && d.next ? `Done. It comes back on ${C.fmtDate(d.next)}.` : 'Task marked done.'), 'info');
             },
-            onRepeatChange(e) { if (e.repeatUnit === 'None' || !(C.toInt(e.repeatEvery) >= 1)) e.repeatEvery = 1; this.rev++; },
-            get upcomingEvents() {
-                return this.memo('ue', '', () => {
-                    const t = this.today;
-                    return this.events.filter(e => !e._draft && !C.eventDone(e, t)).map(e => {
-                        const n = C.nextEventDate(e, t); if (!n) return null;
-                        const days = C.daysBetween(t, n);
-                        return days <= 45 && (days >= 0 || e.kind === 'Task') ? { id: e.id, title: e.title || 'Untitled', kind: e.kind, date: n, days, repeat: e.repeatUnit !== 'None' ? C.repeatLabel(e).toLowerCase() : '', e } : null;
-                    }).filter(Boolean).sort((a, b) => a.days - b.days);
+            onRepeatChange(e) { if (e.repeatUnit === 'None') { e.repeatEvery = 1; e.endDate = ''; } else if (!(C.toInt(e.repeatEvery) >= 1)) e.repeatEvery = 1; this.rev++; },
+            // A note has no date or repeat; turning a note back into an event / task gives it today's date to start from.
+            onKindChange(e) { if (e.kind === 'Note') { e.eventDate = ''; e.repeatUnit = 'None'; e.repeatEvery = 1; e.endDate = ''; e.doneDate = ''; } else if (!C.validISO(e.eventDate)) e.eventDate = this.today; this.rev++; },
+            /* Reminders for the dashboard: open tasks and coming events. overdue = tasks whose date has passed,
+             * today = due / happening today, soon = the next 45 days. Done, ended and past items and notes are left out. */
+            get reminders() {
+                return this.memo('rem', '', () => {
+                    const t = this.today, out = { overdue: [], today: [], soon: [] };
+                    this.events.forEach(e => {
+                        if (e._draft || e.kind === 'Note' || C.eventClosed(e, t)) return;
+                        const n = C.nextEventDate(e, t); if (!n) return;
+                        const days = C.daysBetween(t, n), r = { id: e.id, title: e.title || 'Untitled', kind: e.kind, date: n, days, repeat: e.repeatUnit !== 'None' ? C.repeatLabel(e).toLowerCase() : '', e };
+                        if (days < 0) out.overdue.push(r); else if (days === 0) out.today.push(r); else if (days <= 45) out.soon.push(r);
+                    });
+                    const by = (a, b) => a.days - b.days || a.title.localeCompare(b.title);
+                    out.overdue.sort(by); out.today.sort(by); out.soon.sort(by);
+                    return { ...out, now: [...out.overdue, ...out.today], n: out.overdue.length + out.today.length };
                 });
+            },
+            remWhen(r) { return r.days < 0 ? Math.abs(r.days) + (r.days === -1 ? ' day' : ' days') + ' overdue' : r.days === 0 ? 'Today' : r.days === 1 ? 'Tomorrow' : 'in ' + r.days + ' days'; },
+
+            /* ----- bulk import of events / tasks / notes from a CSV file (rows are ADDED; nothing is replaced) ----- */
+            evKey(r) { return [r.kind, String(r.title).trim().toLowerCase(), r.eventDate || '', r.repeatUnit, r.repeatEvery, r.endDate || '', r.kind === 'Note' ? String(r.notes || '').trim() : ''].join('|'); },
+            async importEventsCSV(event) {
+                const input = event.target, file = input.files && input.files[0];
+                if (!file) return;
+                try {
+                    if (file.size > 2 * 1024 * 1024) { this.showToast('That file is too large (max 2 MB).', 'error'); return; }
+                    const res = C.eventsFromCSV(await file.text());
+                    const seen = new Set(this.events.filter(e => !e._draft).map(e => this.evKey(e))), rows = []; let dupes = 0;
+                    res.rows.forEach(r => { const k = this.evKey(r); if (seen.has(k)) dupes++; else { seen.add(k); rows.push(r); } });
+                    this.evImport = { show: true, name: String(file.name || 'file.csv').slice(0, 80), rows: rows.slice(0, 2000), skipped: res.skipped, dupes, over: Math.max(0, rows.length - 2000) };
+                } catch (e) { console.error(e); this.showToast('Could not read that file: ' + (e.message || e), 'error'); }
+                finally { input.value = ''; }
+            },
+            confirmEvImport() {
+                const rows = this.evImport.rows; this.evImport.show = false;
+                if (!rows.length) return;
+                let id = this.newId(this.events);
+                const added = rows.map(r => ({ id: id++, ...r }));
+                this.events.push(...added); this.rev++;
+                if (this.save(added.map(r => opRow('events', r)))) { this.ef = BLANK_EF(); this.refreshEvents(); this.showToast(`Imported ${added.length} row(s).`); }
+            },
+            eventsTemplateCSV() {
+                const t = this.today;
+                csvSave([C.EVENT_CSV_COLUMNS, ['Mom birthday', 'Event', '1968-11-24', 'Year', 1, '', ''], ['Learn Spanish 20 min', 'Task', t, 'Day', 1, C.addDays(t, 90), 'Lesson, then ten new words'],
+                    ['Call parents', 'Task', t, 'Week', 2, '', ''], ['Renew passport', 'Task', C.addDays(t, 30), 'None', '', '', 'Photos needed'], ['Shopping list', 'Note', '', '', '', '', 'Milk\nEggs']], 'tracker_events_template.csv');
+            },
+
+            /* ----- CSV of what a tab is showing (its filters and sort applied). Real values, even while the mask is on. ----- */
+            exportEventsCSV() {
+                const rows = this.eRows.filter(e => !e._draft); if (!rows.length) { this.showToast('Nothing to export with these filters.', 'info'); return; }
+                csvSave([[...C.EVENT_CSV_COLUMNS, 'Next date', 'Status', 'Done on'], ...rows.map(e => [e.title, e.kind, e.eventDate, e.kind === 'Note' ? '' : e.repeatUnit, e.repeatUnit !== 'None' ? e.repeatEvery : '', e.endDate, e.notes, this.evNext(e), this.evState(e), e.doneDate])], 'tracker_events_' + stamp() + '.csv');
+                this.showToast(`Exported ${rows.length} row(s).`);
+            },
+            exportPayCSV() {
+                const rows = this.cRows.filter(c => !c._draft); if (!rows.length) { this.showToast('Nothing to export with these filters.', 'info'); return; }
+                csvSave([['Name', 'Category', 'Amount', 'Currency', 'Repeats', 'Due', 'Start date', 'End date', 'Status', 'Next due date', 'Paid due dates', 'Method', 'Notes', 'Archived'],
+                    ...rows.map(c => { const st = this.st(c); return [c.name, c.category, c.amount, c.currency, C.frequencyLabel(c), this.scheduleText(c), c.startDate, c.endDate, st.status, st.next, st.paidCount, c.method, c.notes, C.isArchived(c) ? 'yes' : '']; })], 'tracker_pay_' + stamp() + '.csv');
+                this.showToast(`Exported ${rows.length} commitment(s).`);
+            },
+            exportLogCSV() {              // every row that matches the filters, not only the page on screen
+                if (!db) return;
+                this.flush();
+                let ids = [];
+                try { const q = C.buildLogQuery(this.lf, this.ls, { size: 1, offset: 0 }); ids = C.queryAll(this.queryDb(), q.sql, [...q.filterParams, 1000000, 0]).map(r => r.id); }
+                catch (e) { console.error(e); this.showToast('Export failed: ' + e.message, 'error'); return; }
+                const m = new Map(this.expenseLogs.map(l => [l.id, l])), rows = ids.map(id => m.get(id)).filter(l => l && !l._draft);
+                if (!rows.length) { this.showToast('Nothing to export with these filters.', 'info'); return; }
+                csvSave([['Actual date', 'Description', 'Category', 'Amount', 'Currency', 'Method', 'Linked commitment', 'Commitment date', 'Notes'],
+                    ...rows.map(l => [l.actualDate, l.item, l.category, l.amount, l.currency, l.method, this.commitmentName(l.commitmentId), l.commitmentDate, l.notes])], 'tracker_expenses_' + stamp() + '.csv');
+                this.showToast(`Exported ${rows.length} expense row(s).`);
+            },
+            exportDashboardCSV() {        // totals of the window, the due dates as filtered on screen, and the reminders
+                const an = this.an, curs = [...new Set([an.required, an.paid, an.outstanding, an.overdue, an.actual].flatMap(o => Object.keys(o)))].sort(), v = (o, c) => (o[c] === undefined ? 0 : o[c]);
+                const rows = [['Dashboard', this.win.label], ['Exported on', this.today], [],
+                    ['Totals', 'Planned to pay', 'Paid so far', 'Still to pay', 'Overdue', 'Spent (all expenses)'], ...curs.map(c => [c, v(an.required, c), v(an.paid, c), v(an.outstanding, c), v(an.overdue, c), v(an.actual, c)]), [],
+                    ['Due dates', this.dueSpan.label + (this.dueFilter !== 'All' || this.activeDueFilters ? ' (filtered as on screen)' : '')],
+                    ['Due date', 'Commitment', 'Category', 'Amount', 'Currency', 'Status', 'Paid on', 'Method'],
+                    ...this.dueRows.map(o => [o.date, o.c.name, o.c.category, o.amount, o.currency, this.dueState(o), o.paid && o.log ? o.log.actualDate : '', o.c.method]), [],
+                    ['Events and tasks', 'overdue, today and the next 45 days'], ['Date', 'Title', 'Kind', 'When', 'Repeats'],
+                    ...[...this.reminders.overdue, ...this.reminders.today, ...this.reminders.soon].map(r => [r.date, r.title, r.kind, this.remWhen(r), r.repeat])];
+                csvSave(rows, 'tracker_dashboard_' + stamp() + '.csv');
+                this.showToast('Dashboard exported.');
             },
 
             /* ============================== dashboard analytics ============================== */
@@ -1150,12 +1254,11 @@
                 else this.showToast(`Exported ${name}.`);
             },
             exportCSV() {
-                const cell = v => { if (v === null || v === undefined) return ''; let s = String(v); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
                 const rows = [['Type', 'Name / Item', 'Category', 'Amount', 'Currency', 'Frequency / Kind', 'Schedule', 'Start date', 'End date', 'Actual date', 'Commitment date', 'Linked commitment', 'Status', 'Method', 'Notes']];
                 this.commitments.filter(c => !c._draft).forEach(c => rows.push(['Commitment', c.name, c.category, c.amount, c.currency, C.frequencyLabel(c), this.scheduleText(c), c.startDate, c.endDate, '', '', '', this.st(c).status, c.method, c.notes]));
                 this.expenseLogs.filter(l => !l._draft).forEach(l => rows.push(['ExpenseLog', l.item, l.category, l.amount, l.currency, '', '', '', '', l.actualDate, l.commitmentDate, this.commitmentName(l.commitmentId), '', l.method, l.notes]));
-                this.events.filter(e => !e._draft).forEach(e => rows.push([e.kind, e.title, '', '', '', C.repeatLabel(e), '', e.eventDate, '', '', '', '', this.evState(e), '', e.notes]));
-                download(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'tracker_export_' + stamp() + '.csv');
+                this.events.filter(e => !e._draft).forEach(e => rows.push([e.kind, e.title, '', '', '', e.kind === 'Note' ? '' : C.repeatLabel(e), '', e.eventDate, e.endDate, '', '', '', this.evState(e), '', e.notes]));
+                csvSave(rows, 'tracker_export_' + stamp() + '.csv');
                 this.showToast('CSV exported successfully!');
             },
             async importSQLite(event) {

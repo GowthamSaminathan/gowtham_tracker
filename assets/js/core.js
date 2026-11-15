@@ -3,31 +3,34 @@
  *  - occurrence generation + derived status for payment commitments (based on startDate / endDate)
  *  - dashboard time windows + analytics
  *  - SQL builder for the Expense Log (filter / multi-column sort / pagination)
- *  - schema v6 (only v6 files are opened; older files are rejected unchanged - the v6.0 build converts v4 / v5 files)
+ *  - schema v7 (v6 files get the one new column when opened; anything older is rejected unchanged - the v6.0 build
+ *    converts v4 / v5 files)
  *  - settings (key/value, validated)
  *  - validation
  */
 (function (root) {
     'use strict';
-    const SCHEMA_VERSION = 6;
+    const SCHEMA_VERSION = 7;
 
     /* ------------------------------------------------------------------ schema */
-    /* Schema v6:
+    /* Schema v7 (v6 + events.endDate and the 'Note' kind):
      *  - commitments.every        : repeat interval. Monthly + every 2 = every 2 months, Yearly + every 5 = every 5 years.
      *  - events.repeatUnit/Every  : None | Day | Week | Month | Year, every N. events.doneDate = the occurrence that was
      *                               ticked off (so a repeating task re-opens by itself for its next date).
+     *  - events.endDate           : last day of a repeating series (empty = no end).
+     *  - events.kind 'Note'       : free text without a date (title + notes only).
      *  - ids are plain INTEGER PRIMARY KEY (the app assigns them). */
     const SCHEMA = {
         commitments:  { name: 'TEXT', category: 'TEXT', amount: 'REAL', currency: 'TEXT', frequency: 'TEXT', every: 'INTEGER', dueDay: 'INTEGER', dueMonth: 'INTEGER', startDate: 'TEXT', endDate: 'TEXT', method: 'TEXT', notes: 'TEXT', pausedMonth: 'TEXT', archived: 'INTEGER' },
         expense_logs: { actualDate: 'TEXT', commitmentDate: 'TEXT', commitmentId: 'INTEGER', category: 'TEXT', item: 'TEXT', amount: 'REAL', currency: 'TEXT', method: 'TEXT', notes: 'TEXT' },
-        events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeatUnit: 'TEXT', repeatEvery: 'INTEGER', doneDate: 'TEXT', notes: 'TEXT' }
+        events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeatUnit: 'TEXT', repeatEvery: 'INTEGER', endDate: 'TEXT', doneDate: 'TEXT', notes: 'TEXT' }
     };
     // "Not required this time": one row per skipped due date.
     const SKIPS_DDL = 'CREATE TABLE IF NOT EXISTS skips (commitmentId INTEGER NOT NULL, commitmentDate TEXT NOT NULL, PRIMARY KEY (commitmentId, commitmentDate)) WITHOUT ROWID';
     const SETTINGS_DDL = "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '') WITHOUT ROWID";
     const NULLABLE = new Set(['dueDay', 'dueMonth', 'endDate', 'commitmentDate', 'commitmentId', 'pausedMonth', 'doneDate']);
     const DEFAULTS = { currency: 'AED', frequency: 'Monthly', kind: 'Event', repeatUnit: 'None', every: 1, repeatEvery: 1 };
-    const ENUMS = { frequency: ['Monthly', 'Yearly', 'One-Time'], kind: ['Event', 'Task'], repeatUnit: ['None', 'Day', 'Week', 'Month', 'Year'] };
+    const ENUMS = { frequency: ['Monthly', 'Yearly', 'One-Time'], kind: ['Event', 'Task', 'Note'], repeatUnit: ['None', 'Day', 'Week', 'Month', 'Year'] };
     const MAX_EVERY = 120;                                                    // longest repeat interval (months, years, days or weeks)
     // Only the Expense Log is queried with SQL; commitments and events are small and read whole, so they need no index.
     const INDEXES = [
@@ -327,17 +330,25 @@
         const [y, m, d] = ymd(e.eventDate), [yy, mm] = addMonths(y, m, unit === 'Year' ? 12 * n : n);
         return iso(yy, mm, clampDay(yy, mm, d));
     }
-    // cur  = the date this event / task is "about" now: its latest date up to today (the first date while that is still ahead)
-    // next = the date after cur ('' when it does not repeat)
+    // Last day of a repeating series ('' = it never ends). A one-off item has no series, so its end date is ignored.
+    const seriesEnd = e => repeatOf(e) && validISO(e.endDate) ? e.endDate : '';
+    // cur   = the date this event / task is "about" now: its latest date up to today (the first date while that is still ahead)
+    // next  = the date after cur ('' when it does not repeat, or the series ends before it)
+    // ended = a repeating series whose end date has passed
     function eventDates(e, today) {
-        if (!validISO(e.eventDate)) return { cur: '', next: '' };
-        const unit = repeatOf(e);
-        if (!unit || e.eventDate >= today) return { cur: e.eventDate, next: unit ? eventOccurrence(e, 1) : '' };
-        const n = repeatEvery(e), days = daysBetween(e.eventDate, today), [y, m] = ymd(e.eventDate), [ty, tm] = ymd(today);
-        let k = unit === 'Day' ? Math.floor(days / n) : unit === 'Week' ? Math.floor(days / (7 * n)) : Math.floor(((ty * 12 + tm) - (y * 12 + m)) / (unit === 'Year' ? 12 * n : n));
-        while (k > 0 && eventOccurrence(e, k) > today) k--;                 // month / year estimate can be one step ahead
-        while (eventOccurrence(e, k + 1) <= today) k++;
-        return { cur: eventOccurrence(e, k), next: eventOccurrence(e, k + 1) };
+        if (e.kind === 'Note' || !validISO(e.eventDate)) return { cur: '', next: '', ended: false };
+        const unit = repeatOf(e), end = seriesEnd(e);
+        if (!unit) return { cur: e.eventDate, next: '', ended: false };
+        const limit = end && end < today ? end : today;                      // never look past the end of the series
+        let k = 0;
+        if (e.eventDate < limit) {
+            const n = repeatEvery(e), days = daysBetween(e.eventDate, limit), [y, m] = ymd(e.eventDate), [ty, tm] = ymd(limit);
+            k = unit === 'Day' ? Math.floor(days / n) : unit === 'Week' ? Math.floor(days / (7 * n)) : Math.floor(((ty * 12 + tm) - (y * 12 + m)) / (unit === 'Year' ? 12 * n : n));
+            while (k > 0 && eventOccurrence(e, k) > limit) k--;              // month / year estimate can be one step ahead
+            while (eventOccurrence(e, k + 1) <= limit) k++;
+        }
+        const next = eventOccurrence(e, k + 1);
+        return { cur: eventOccurrence(e, k), next: end && next > end ? '' : next, ended: !!end && end < today };
     }
     // A task is done when its current date was ticked off. A repeating task re-opens by itself when its next date arrives.
     function eventDone(e, today) {
@@ -351,16 +362,93 @@
         if (e.kind === 'Task') return eventDone(e, today) && next ? next : cur;
         return cur >= today || !next ? cur : next;
     }
+    /* Note      : free text, no date
+     * Ended     : a repeating series whose end date has passed (a task that was ticked on its last date shows Done)
+     * Tasks     : Done / Overdue / Due today / Open          Events: Today / Upcoming / Past                       */
     function eventState(e, today) {
-        const n = nextEventDate(e, today);
-        if (e.kind === 'Task') return eventDone(e, today) ? 'Done' : (n && n < today ? 'Overdue' : n === today ? 'Due today' : 'Open');
+        if (e.kind === 'Note') return 'Note';
+        const n = nextEventDate(e, today), ended = eventDates(e, today).ended;
+        if (e.kind === 'Task') return eventDone(e, today) ? 'Done' : ended ? 'Ended' : (n && n < today ? 'Overdue' : n === today ? 'Due today' : 'Open');
         if (!n) return 'No date';
-        return n === today ? 'Today' : (n < today ? 'Past' : 'Upcoming');
+        return ended ? 'Ended' : n === today ? 'Today' : (n < today ? 'Past' : 'Upcoming');
     }
-    // "Does not repeat", "Every day", "Every 2 weeks", "Every year"
+    // Nothing left to do or to wait for: done tasks, ended series, events that are over.
+    const eventClosed = (e, today) => ['Done', 'Ended', 'Past'].includes(eventState(e, today));
+    // "Does not repeat", "Every day", "Every 2 weeks until 31 Dec 2026"
     function repeatLabel(e) {
-        const unit = repeatOf(e), n = repeatEvery(e);
-        return !unit ? 'Does not repeat' : n === 1 ? 'Every ' + unit.toLowerCase() : `Every ${n} ${unit.toLowerCase()}s`;
+        const unit = repeatOf(e), n = repeatEvery(e), end = seriesEnd(e);
+        if (!unit) return 'Does not repeat';
+        return (n === 1 ? 'Every ' + unit.toLowerCase() : `Every ${n} ${unit.toLowerCase()}s`) + (end ? ' until ' + fmtDate(end) : '');
+    }
+
+    /* ------------------------------------------------------------------ CSV (reading; used by the bulk import of events) */
+    // RFC 4180-style: quoted fields may hold commas, quotes ("") and line breaks. Also accepts ; or tab as the separator.
+    function parseCSV(text) {
+        let t = String(text || '').replace(/^\uFEFF/, '');
+        const first = t.split(/\r?\n/, 1)[0] || '', count = ch => { let n = 0, q = false; for (const c of first) { if (c === '"') q = !q; else if (c === ch && !q) n++; } return n; };
+        const sep = [',', ';', '\t'].sort((a, b) => count(b) - count(a))[0];
+        const rows = []; let row = [], cell = '', q = false;
+        for (let i = 0; i < t.length; i++) {
+            const c = t[i];
+            if (q) { if (c === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+            else if (c === '"' && cell === '') q = true;
+            else if (c === sep) { row.push(cell); cell = ''; }
+            else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; row.push(cell); cell = ''; rows.push(row); row = []; }
+            else cell += c;
+        }
+        if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+        return rows.filter(r => r.some(v => String(v).trim() !== ''));
+    }
+    // Dates typed by hand or re-saved by a spreadsheet: 2026-11-15, 15/11/2026, 15-11-2026, 15.11.2026, 15 Nov 2026.
+    // Slash / dash / dot dates are read day first (15/11/2026); a month above 12 is swapped so 11/15/2026 also works.
+    function parseDate(v) {
+        const t = String(v ?? '').trim(); if (!t) return '';
+        let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(t);
+        if (m) { const d = iso(+m[1], +m[2], +m[3]); return validISO(d) ? d : null; }
+        m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(t);
+        if (m) { let dd = +m[1], mm = +m[2]; if (mm > 12 && dd <= 12) [dd, mm] = [mm, dd]; const d = iso(+m[3], mm, dd); return validISO(d) ? d : null; }
+        m = /^(\d{1,2})[\s-]+([A-Za-z]{3})[A-Za-z]*[\s,-]+(\d{4})$/.exec(t);
+        if (m) { const mi = MONTH_NAMES.findIndex(x => x.toLowerCase() === m[2].toLowerCase()); const d = mi >= 0 ? iso(+m[3], mi + 1, +m[1]) : ''; return validISO(d) ? d : null; }
+        return null;                                                          // not a date this app can read
+    }
+    /* Turns a CSV into event / task / note rows. The first line names the columns (any order, extra columns ignored):
+     *   Title*, Kind (Event | Task | Note), Date* (not for notes), Repeat (None | Day | Week | Month | Year), Every (number),
+     *   End date, Notes.   "Repeat" also accepts daily / weekly / monthly / yearly and "Every 2 weeks".
+     * Returns { rows, skipped: [{ line, reason }] }. Nothing is written here. */
+    const EVENT_CSV_COLUMNS = ['Title', 'Kind', 'Date', 'Repeat', 'Every', 'End date', 'Notes'];
+    function eventsFromCSV(text) {
+        const data = parseCSV(text), out = { rows: [], skipped: [] };
+        if (!data.length) { out.skipped.push({ line: 1, reason: 'The file is empty' }); return out; }
+        const norm = v => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+        const head = data[0].map(norm), col = (...names) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; };
+        const iTitle = col('title', 'name', 'event', 'task'), iKind = col('kind', 'type'), iDate = col('date', 'eventdate', 'firstdate', 'startdate'), iRep = col('repeat', 'repeats', 'repeatunit', 'frequency'),
+            iEvery = col('every', 'repeatevery', 'interval'), iEnd = col('enddate', 'end', 'until'), iNotes = col('notes', 'note', 'details', 'text');
+        if (iTitle < 0) { out.skipped.push({ line: 1, reason: 'The first line must name the columns and include "Title"' }); return out; }
+        const UNITS = { none: 'None', no: 'None', '': 'None', doesnotrepeat: 'None', day: 'Day', days: 'Day', daily: 'Day', everyday: 'Day', week: 'Week', weeks: 'Week', weekly: 'Week', month: 'Month', months: 'Month', monthly: 'Month', year: 'Year', years: 'Year', yearly: 'Year', annual: 'Year', annually: 'Year' };
+        data.slice(1).forEach((r, k) => {
+            const line = k + 2, get = i => (i >= 0 && r[i] !== undefined ? String(r[i]).trim() : ''), bad = reason => out.skipped.push({ line, reason });
+            const title = get(iTitle); if (!title) return bad('No title');
+            const kindRaw = norm(get(iKind)), kind = kindRaw === 'task' || kindRaw === 'todo' ? 'Task' : kindRaw === 'note' ? 'Note' : kindRaw === '' || kindRaw === 'event' ? 'Event' : null;
+            if (!kind) return bad(`Unknown kind "${get(iKind)}" (use Event, Task or Note)`);
+            const row = { title: title.slice(0, 200), kind, eventDate: '', repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: get(iNotes) };
+            if (kind !== 'Note') {
+                const d = parseDate(get(iDate)); if (!d) return bad(get(iDate) ? `Cannot read the date "${get(iDate)}"` : 'No date');
+                row.eventDate = d;
+                let rep = get(iRep), every = get(iEvery);
+                const m = /^every\s+(\d+)\s+([a-z]+)/i.exec(rep); if (m) { every = every || m[1]; rep = m[2]; } else rep = rep.replace(/^every\s+/i, '');
+                const unit = UNITS[norm(rep)]; if (!unit) return bad(`Unknown repeat "${get(iRep)}" (use None, Day, Week, Month or Year)`);
+                row.repeatUnit = unit;
+                if (unit !== 'None') {
+                    const n = every === '' ? 1 : toInt(every); if (!(n >= 1 && n <= MAX_EVERY)) return bad(`"Every" must be a whole number from 1 to ${MAX_EVERY}`);
+                    row.repeatEvery = n;
+                    const end = parseDate(get(iEnd)); if (end === null) return bad(`Cannot read the end date "${get(iEnd)}"`);
+                    if (end && end < d) return bad('The end date is before the date');
+                    row.endDate = end;
+                }
+            }
+            out.rows.push(row);
+        });
+        return out;
     }
 
     /* ------------------------------------------------------------------ Expense-log SQL (parameterised) */
@@ -414,6 +502,7 @@
     const UPSERT = t => INS(t).replace(/^INSERT/, 'INSERT OR REPLACE');
     // Turns an in-memory row into safe DB values (never throws, so a half-edited row can always be saved)
     function dbValues(table, r) {
+        if (table === 'events' && r.kind === 'Note') r = { ...r, eventDate: '', repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '' };      // a note has no date
         const vals = [toInt(r.id)];
         for (const [c, ty] of Object.entries(SCHEMA[table])) {
             let v = r[c];
@@ -438,22 +527,30 @@
     }
     function inTx(db, fn) { db.run('BEGIN'); try { const r = fn(); db.run('COMMIT'); return r; } catch (e) { try { db.run('ROLLBACK'); } catch (_) { } throw e; } }
 
-    // Opens a tracker database. Empty -> fresh v6. v6 -> checked (missing optional tables / indexes are added).
-    // Anything else is rejected and NOT changed.
+    // Small in-place steps between neighbouring formats (v4 / v5 files still need the v6.0 build). Each runs in a transaction.
+    const UPGRADES = {
+        6: db => { if (!rowsOf(db, 'PRAGMA table_info(events)').some(r => r.name === 'endDate')) db.run('ALTER TABLE events ADD COLUMN endDate TEXT'); }      // v7: end date of a repeating event / task
+    };
+    // Opens a tracker database. Empty -> fresh. Current -> checked (missing optional tables / indexes are added).
+    // One format behind -> the new column is added. Anything else is rejected and NOT changed.
     function ensureSchema(db) {
-        const ver = getVersion(db), tables = listTables(db), fail = (code, msg) => { const e = new Error(msg); e.code = code; return e; };
+        const tables = listTables(db), fail = (code, msg) => { const e = new Error(msg); e.code = code; return e; };
+        let ver = getVersion(db), from;
         if (ver > SCHEMA_VERSION) throw fail('NEWER_SCHEMA', `This database was created by a newer app version (schema ${ver}). Reload the app to update it, then try again.`);
-        if (ver === SCHEMA_VERSION) {
-            for (const [t, cols] of Object.entries(SCHEMA)) {
-                if (!tables.includes(t)) throw fail('BAD_SCHEMA', `This database is missing the "${t}" table.`);
-                const have = rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name), miss = Object.keys(cols).filter(c => !have.includes(c));
-                if (miss.length) throw fail('BAD_SCHEMA', `Table "${t}" is missing column(s): ${miss.join(', ')}.`);
-            }
-            createSchema(db);
-            return { fresh: false };
+        if (!ver && !tables.length) { inTx(db, () => { createSchema(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); }); return { fresh: true }; }
+        if (ver < SCHEMA_VERSION && !UPGRADES[ver]) throw fail('OLD_SCHEMA', `This database is in an older format (schema ${ver}), which this version no longer converts. Open it once in app version 6.0, export it, and import that file here.`);
+        if (ver < SCHEMA_VERSION) {
+            if (!['commitments', 'expense_logs', 'events'].every(t => tables.includes(t))) throw fail('BAD_SCHEMA', 'This database is missing one of its tables.');
+            from = ver;
+            inTx(db, () => { while (ver < SCHEMA_VERSION) { UPGRADES[ver](db); ver++; } db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); });
         }
-        if (!tables.length) { inTx(db, () => { createSchema(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); }); return { fresh: true }; }
-        throw fail('OLD_SCHEMA', `This database is in an older format (schema ${ver}), which this version no longer converts. Open it once in app version 6.0, export it, and import that file here.`);
+        for (const [t, cols] of Object.entries(SCHEMA)) {
+            if (!tables.includes(t)) throw fail('BAD_SCHEMA', `This database is missing the "${t}" table.`);
+            const have = rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name), miss = Object.keys(cols).filter(c => !have.includes(c));
+            if (miss.length) throw fail('BAD_SCHEMA', `Table "${t}" is missing column(s): ${miss.join(', ')}.`);
+        }
+        createSchema(db);
+        return from ? { fresh: false, upgradedFrom: from } : { fresh: false };
     }
 
     /* ------------------------------------------------------------------ settings (stored in the database, validated on read and write) */
@@ -519,18 +616,24 @@
     }
     function validateEvent(o) {
         const e = {};
-        if (!String(o.title || '').trim()) e.title = 'Title is required';
-        if (!ENUMS.kind.includes(o.kind)) e.kind = 'Choose Event or Task';
+        if (!String(o.title || '').trim()) e.title = 'Title is required'; else if (String(o.title).length > 200) e.title = 'Title is too long (max 200)';
+        if (!ENUMS.kind.includes(o.kind)) e.kind = 'Choose Event, Task or Note';
+        if (o.kind === 'Note') return e;                                       // a note is just a title and text
         if (!validISO(o.eventDate)) e.eventDate = 'Select a valid date';
         if (!ENUMS.repeatUnit.includes(o.repeatUnit)) e.repeatUnit = 'Choose how it repeats';
-        else if (o.repeatUnit !== 'None') { const n = toInt(o.repeatEvery ?? 1); if (n === null || n < 1 || n > MAX_EVERY) e.repeatEvery = `Repeat interval must be 1-${MAX_EVERY}`; }
+        else if (o.repeatUnit !== 'None') {
+            const n = toInt(o.repeatEvery ?? 1); if (n === null || n < 1 || n > MAX_EVERY) e.repeatEvery = `Repeat interval must be 1-${MAX_EVERY}`;
+            const hasEnd = !(o.endDate === '' || o.endDate === null || o.endDate === undefined);
+            if (hasEnd && !validISO(o.endDate)) e.endDate = 'Select a valid end date';
+            else if (hasEnd && validISO(o.eventDate) && o.endDate < o.eventDate) e.endDate = 'End date must be on/after the date';
+        }
         return e;
     }
 
     root.Core = {
         SCHEMA_VERSION, SCHEMA, ENUMS, DEFAULTS, MAX_EVERY, MONTH_NAMES, SORT_COLS, SETTINGS, BREAKDOWN_MODES,
         toInt, toMoney, addTo, pad2, isLeap, daysInMonth, iso, isISO, isMonthKey, ymd, validISO, todayISO, monthKey, monthStart, monthEnd, clampDay, addMonths, addDays, daysBetween, fmtDate,
-        occurrencesOf, everyOf, frequencyLabel, needsDueMonth, eventDates, eventDone, eventOccurrence, repeatLabel, occKey, buildPaidIndex, buildSkipIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
+        occurrencesOf, everyOf, frequencyLabel, needsDueMonth, eventDates, eventDone, eventClosed, eventOccurrence, repeatLabel, seriesEnd, parseCSV, parseDate, eventsFromCSV, EVENT_CSV_COLUMNS, occKey, buildPaidIndex, buildSkipIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
         buildLogQuery, queryAll, rowsOf, listTables, getVersion, createSchema, INS, UPSERT, dbValues, inTx, ensureSchema, readSettings, writeSetting,
         validateCommitment, validateLog, validateEvent
     };

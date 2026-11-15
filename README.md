@@ -5,16 +5,16 @@ A private tracker for recurring payments, everyday expenses, events and tasks. I
 - **Use it:** <https://tracker.gowthams.com>
 - **Try it with sample data:** <https://tracker.gowthams.com/?demo=1>
 
-Current version: 6.1.0
+Current version: 7.0.0
 
 ## What it does
 
 | Tab | What you do there |
 |---|---|
-| Dashboard | Pick a time window with one tap, then see every due date in it and act on it directly. Below that: events and tasks for the next 45 days, totals per currency, and charts. |
+| Dashboard | Pick a time window with one tap. Reminders show tasks and events that are overdue or due today. Then every due date in the window, which you can act on directly, followed by totals per currency and charts. |
 | Pay Commitments | Your recurring payments: rent, loans, bills, subscriptions, insurance. Every N months or every N years (monthly, every 3 months, yearly, every 2 or 5 years…), or one-time. |
 | Expense Log | Everything actually spent. A payment for a commitment is a log row linked to that due date. |
-| Events & Tasks | Days to remember (birthdays, renewals) and things to tick off (a daily lesson, a weekly call). Either can repeat every N days, weeks, months or years. |
+| Events, Tasks & Notes | Days to remember (birthdays, renewals), things to tick off (a daily lesson, a weekly call) and free-text notes without a date. Events and tasks can repeat every N days, weeks, months or years, with an optional end date. |
 | Settings | Auto-save, theme, privacy mask, demo, export/import, cloud backup. |
 
 Amounts in different currencies are never added together; every total is shown per currency.
@@ -62,7 +62,40 @@ Status is worked out from the due dates and the linked payments; it is never sto
 
 **Payments.** In the edit form, set *Repeats every* to a number and *months* or *years*: `1 month` is monthly, `3 months` is quarterly, `2 years` is every second year. For anything other than plain monthly you also pick the month it is first due; it repeats from there. The table on a computer has the same number and unit fields. Intervals go up to 120.
 
-**Events and tasks.** Set *Repeats* to every N days, weeks, months or years, counted from the date you enter. An event always shows its next date. A task is ticked off for its current date and opens again by itself on the next one, so a daily task is due again every morning. A missed weekly or monthly task stays overdue until you tick it or its next date arrives.
+**Events and tasks.** Set *Repeats* to every N days, weeks, months or years, counted from the date you enter. An event always shows its next date. A task is ticked off for its current date and opens again by itself on the next one, so a daily task is due again every morning. A missed weekly or monthly task stays overdue until you tick it or its next date arrives. Give a repeating item an *End date* to stop it; leave it empty for no end. After the end date it shows as *Ended* and leaves the reminders.
+
+## Events, tasks and notes
+
+- **Notes on anything.** The note icon on a row opens an editor for as many lines as you like. A **Note** is its own kind of row: a title and text, no date.
+- **Search and filters.** Search looks in titles and notes. Filter by kind, status, how it repeats, and a range for the next date, or hide what is done, ended or past.
+- **Reminders.** The dashboard lists tasks and events that are overdue or due today, with a tick button for tasks, and folds the next 45 days below. The Events button in the navigation shows how many are waiting.
+
+### Bulk import from CSV
+
+*Import CSV* on the Events tab adds many rows at once. It shows what it read and what it could not read, with line numbers, and adds nothing until you confirm. Rows are added to what you have; a row that is already there is left out, so importing the same file twice is harmless. *Example file* downloads a file to fill in.
+
+| Column | Values |
+|---|---|
+| Title | Required |
+| Kind | `Event`, `Task` or `Note`. Empty means Event |
+| Date | Required except for notes. `2026-11-15`, `15/11/2026` or `15 Nov 2026`. Day comes first in slash dates |
+| Repeat | `None`, `Day`, `Week`, `Month`, `Year`. Also `daily`, `weekly`, `Every 2 weeks` |
+| Every | A whole number, 1–120. Empty means 1 |
+| End date | Optional, for repeating rows |
+| Notes | Optional; may span several lines inside quotes |
+
+Columns can be in any order and extra columns are ignored. A spreadsheet set to month-first dates would turn 5 March into 3 May, so check dates where the day is 12 or lower.
+
+## Exports
+
+| Where | What you get |
+|---|---|
+| Header, *Export DB* | The whole database as a `.db` file |
+| Header or Settings, *CSV* | Everything in one CSV |
+| Pay, Expense Log and Events tabs, *Export* | The rows that tab is showing, with its search, filters and sort applied. The Expense Log export includes every matching row, not only the page on screen |
+| Dashboard, CSV button on the due-dates card | Totals of the window per currency, the due dates as filtered on screen, and the reminders |
+
+Exports always contain the real values, also while the privacy mask is on. The Events export has the same columns as the import, so it can be edited and imported elsewhere; done marks are not carried over.
 
 ## Privacy mask
 
@@ -139,13 +172,13 @@ If you host the app at another address, use that address in the steps above. The
 
 ## Data model
 
-Schema version 6 (`PRAGMA user_version = 6`). Only version 6 files are opened. Older files are refused and left unchanged; app version 6.0 (see the commit history) is the one that converts version 4 and 5 files. Data in a browser that is still in an older format is set aside, not deleted.
+Schema version 7 (`PRAGMA user_version = 7`). A version 6 file gets the one new column when it is opened or imported. Older files are refused and left unchanged; app version 6.0 (see the commit history) is the one that converts version 4 and 5 files. Data in a browser that is still in an older format is set aside, not deleted. A device still running an older app version cannot open a version 7 file until it reloads and updates, which also stops it from saving over the new fields.
 
 | Table | Holds |
 |---|---|
 | `commitments` | name, category, amount, currency, frequency (`Monthly`, `Yearly`, `One-Time`), `every` (the interval), due day and month, start and end date, method, notes, paused month, archived flag |
 | `expense_logs` | actual date, description, category, amount, currency, method, notes, and the linked commitment and due date for payments |
-| `events` | title, kind (`Event` or `Task`), first date, `repeatUnit` (`None`, `Day`, `Week`, `Month`, `Year`), `repeatEvery`, `doneDate` (the date that was ticked off), notes |
+| `events` | title, kind (`Event`, `Task` or `Note`), first date (empty for a note), `repeatUnit` (`None`, `Day`, `Week`, `Month`, `Year`), `repeatEvery`, `endDate` (last day of a repeating series, empty for no end), `doneDate` (the date that was ticked off), notes |
 | `skips` | commitment and due date marked *not required* |
 | `settings` | auto-save, theme, last imported and exported file names |
 
@@ -190,6 +223,7 @@ When releasing, change the version in three places so browsers and installed app
 
 ## Recent changes
 
+- **7.0** Events tab: notes editor, a Note kind without a date, end dates, search and filters, bulk import from CSV. Export of what each tab is showing, and of the dashboard. Reminders on the dashboard. Database format 7 (one new column).
 - **6.1** Type any repeat interval in the table as well as the form. Payments made in another month than their due date are explained on the dashboard. The converter for version 4 and 5 files was removed.
 - **6.0** New name. Payments every N months or years. Events and tasks repeat every N days, weeks, months or years, and tasks re-open by themselves; event budgets removed. One-tap time window; due dates first on the dashboard; plainer chart wording. Database format 6.
 - **5.7** Privacy mask; pay, pause, skip and archive from the dashboard; "not required this time"; demo with sample data; safer cloud sync (a device never replaces a drive copy it has not seen); layout fixes for small and mid-size screens.

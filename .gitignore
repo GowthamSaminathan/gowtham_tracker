@@ -9,3 +9,4 @@ gowtham_export_*.csv
 
 # exports (new file names)
 tracker_export_*.csv
+tracker_*.csv
