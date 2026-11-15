@@ -5,7 +5,7 @@ A private tracker for recurring payments, everyday expenses, events and tasks. I
 - **Use it:** <https://tracker.gowthams.com>
 - **Try it with sample data:** <https://tracker.gowthams.com/?demo=1>
 
-Current version: 6.0.0
+Current version: 6.1.0
 
 ## What it does
 
@@ -39,6 +39,10 @@ Select a commitment in **Pay Commitments** (tap a card on a phone, tick a row on
 | Pause | Leaves this month's due date out of this month's totals. Ends by itself when the month changes; if still unpaid it then counts as overdue. | You will pay later and want this month's picture without it. |
 | Archive | Moves the commitment out of every calculation until you restore it (Pay → Archived). Past payments stay in the log. | A commitment that has ended or is on hold. |
 
+### A payment belongs to its due date
+
+"Mark paid" settles one due date, whenever the money actually left. A yearly bill due on 19 December and paid on 31 October therefore counts as paid in the December window, under *Planned to pay* and *Paid so far*, while the money shows under *Spent* in October. The due-date row says when it was paid (`paid 31 Oct (early)`), and *Paid so far* notes how much of it was paid in another month.
+
 ### Statuses
 
 Status is worked out from the due dates and the linked payments; it is never stored, so it cannot go out of sync.
@@ -56,7 +60,7 @@ Status is worked out from the due dates and the linked payments; it is never sto
 
 ## Repeat intervals
 
-**Payments.** In the edit form, set *Repeats every* to a number and *months* or *years*: `1 month` is monthly, `3 months` is quarterly, `2 years` is every second year. For anything other than plain monthly you also pick the month it is first due; it repeats from there. The table on a computer offers the common intervals in one list and shows any other interval you set in the form. Intervals go up to 120.
+**Payments.** In the edit form, set *Repeats every* to a number and *months* or *years*: `1 month` is monthly, `3 months` is quarterly, `2 years` is every second year. For anything other than plain monthly you also pick the month it is first due; it repeats from there. The table on a computer has the same number and unit fields. Intervals go up to 120.
 
 **Events and tasks.** Set *Repeats* to every N days, weeks, months or years, counted from the date you enter. An event always shows its next date. A task is ticked off for its current date and opens again by itself on the next one, so a daily task is due again every morning. A missed weekly or monthly task stays overdue until you tick it or its next date arrives.
 
@@ -135,7 +139,7 @@ If you host the app at another address, use that address in the steps above. The
 
 ## Data model
 
-Schema version 6 (`PRAGMA user_version = 6`). Version 4 and 5 files are upgraded automatically when opened or imported, in one transaction; older files are rejected and left unchanged. A device still running an older app version cannot open a version 6 file until it reloads and updates.
+Schema version 6 (`PRAGMA user_version = 6`). Only version 6 files are opened. Older files are refused and left unchanged; app version 6.0 (see the commit history) is the one that converts version 4 and 5 files. Data in a browser that is still in an older format is set aside, not deleted.
 
 | Table | Holds |
 |---|---|
@@ -146,8 +150,6 @@ Schema version 6 (`PRAGMA user_version = 6`). Version 4 and 5 files are upgraded
 | `settings` | auto-save, theme, last imported and exported file names |
 
 A payment is an `expense_logs` row with a `commitmentId` and a `commitmentDate`. That pair identifies the exact due date it settles.
-
-What changed from version 5: "Bi-Monthly" became `Monthly` with `every = 2` (same due dates); events gained the repeat interval and lost the budget (an existing budget is kept as a line in the notes); the unused `region` column was removed; ids are plain integer keys; two indexes that were never used were dropped.
 
 Validation rules: amounts are numbers above 0 rounded to two decimals; due day is 1–31 and is clamped to shorter months; a one-time commitment needs a due date; a linked payment must point at a real due date of its commitment; repeat intervals are 1–120.
 
@@ -188,6 +190,7 @@ When releasing, change the version in three places so browsers and installed app
 
 ## Recent changes
 
+- **6.1** Type any repeat interval in the table as well as the form. Payments made in another month than their due date are explained on the dashboard. The converter for version 4 and 5 files was removed.
 - **6.0** New name. Payments every N months or years. Events and tasks repeat every N days, weeks, months or years, and tasks re-open by themselves; event budgets removed. One-tap time window; due dates first on the dashboard; plainer chart wording. Database format 6.
 - **5.7** Privacy mask; pay, pause, skip and archive from the dashboard; "not required this time"; demo with sample data; safer cloud sync (a device never replaces a drive copy it has not seen); layout fixes for small and mid-size screens.
 - **5.6** Backup status in the header; upload straight after Save.

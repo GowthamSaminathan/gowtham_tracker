@@ -105,7 +105,7 @@
             lPage: 0, lPageSize: 25, lStale: false,
             ef: { kind: 'All', showDone: true },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '6.0.0',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '6.1.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '' },
@@ -166,11 +166,11 @@
                     const raw = this.demo ? null : store.get(LS_KEY);
                     let opened = false;
                     if (raw) {
-                        try { db = new SQL.Database(fromB64(raw)); if (C.ensureSchema(db).upgradedFrom) this.showToast('Your data was upgraded to the new format. Nothing was lost.', 'info'); opened = true; }
+                        try { db = new SQL.Database(fromB64(raw)); C.ensureSchema(db); opened = true; }
                         catch (e) {
                             console.error('Saved database rejected:', e);
                             store.set(LS_REJECTED, raw);                       // kept, never deleted
-                            this.showToast(e.code === 'OLD_SCHEMA' ? 'The data saved in this browser is from an older version, so it was set aside (not deleted). Import your exported .db file to continue.' : 'Saved data could not be opened. A backup copy was kept and a fresh database was started.', 'error');
+                            this.showToast(e.code === 'OLD_SCHEMA' ? 'The data saved in this browser is in an older format, so it was set aside (not deleted). Sign in to OneDrive or import a current .db file to continue.' : 'Saved data could not be opened. A backup copy was kept and a fresh database was started.', 'error');
                             db = null;
                         }
                     }
@@ -473,16 +473,6 @@
                 if (n === 1) return c.dueDay ? `Day ${c.dueDay} monthly` : 'Monthly';
                 return `Every ${n} months` + (c.dueDay ? ` · day ${c.dueDay}` : '') + (mon ? ` from ${mon}` : '');
             },
-            /* Frequency + interval as ONE choice for the table ("Every 2 months", "Every 5 years"...). Any other interval
-             * (set in the edit form, 1-120) is listed too, so the table never hides what a row really is. */
-            freqKey(o) { return o.frequency + '|' + (o.frequency === 'One-Time' ? 1 : C.everyOf(o)); },
-            freqChoices(o) {
-                const base = [['Monthly', 1], ['Monthly', 2], ['Monthly', 3], ['Monthly', 6], ['Yearly', 1], ['Yearly', 2], ['Yearly', 3], ['Yearly', 5], ['One-Time', 1]];
-                const list = base.map(([f, n]) => [f + '|' + n, C.frequencyLabel({ frequency: f, every: n })]), cur = this.freqKey(o);
-                if (!list.some(x => x[0] === cur) && C.ENUMS.frequency.includes(o.frequency)) list.push([cur, C.frequencyLabel(o)]);
-                return list;
-            },
-            setFreqKey(o, key) { const [f, n] = String(key).split('|'); if (!C.ENUMS.frequency.includes(f)) return; o.frequency = f; o.every = C.toInt(n) || 1; this.onFreqChange(o); },
             needsMonth(o) { return C.needsDueMonth(o); },
             rangeText(c) { return c.frequency === 'One-Time' ? '' : `${C.fmtDate(c.startDate)} → ${c.endDate ? C.fmtDate(c.endDate) : 'ongoing'}`; },
             sortedCommitmentIds() {
@@ -1004,6 +994,21 @@
             },
             /* ---- "Due dates & still to pay": one list for the dashboard window OR a period from today, with status chips,
              *      filters (search / category / commitment / amount / overdue) and totals of what is shown and of the ticked rows. */
+            // A payment belongs to the DUE DATE it settles, whenever the money left. This says when that was, and flags
+            // payments made in another month than the due date (a yearly bill paid weeks early, for example).
+            paidNote(o) {
+                const a = o.paid && o.log ? o.log.actualDate : '';
+                if (!C.validISO(a)) return '';
+                return ' · paid ' + this.shortDate(a) + (C.monthKey(a) < o.month ? ' (early)' : C.monthKey(a) > o.month ? ' (late)' : '');
+            },
+            // Of what is paid in this window, how much left the account outside it (shown under "Paid so far").
+            get paidOutside() {
+                return this.memo('po', JSON.stringify(this.dash), () => {
+                    const m = {}; let n = 0;
+                    this.an.occ.forEach(o => { const a = o.paid && o.log ? o.log.actualDate : ''; if (C.validISO(a) && (a < this.win.start || a > this.win.end)) { C.addTo(m, o.currency, o.amount); n++; } });
+                    return { n, total: m };
+                });
+            },
             dueState(o) { return o.skipped ? 'Skipped' : o.paused ? 'Paused' : o.paid ? 'Paid' : o.overdue ? 'Overdue' : 'Pending'; },
             get dueSpan() {
                 const t = this.today, r = this.dueRange;
@@ -1170,14 +1175,14 @@
                     try {
                         const names = C.listTables(candidate);                   // throws "file is not a database" for other files
                         if (!names.length) throw new Error('this database is empty');
-                        if (!names.some(n => ['commitments', 'expense_logs', 'events', 'events_list', 'uae_payments', 'india_payments'].includes(n))) throw new Error('this file is not a tracker database');
-                        const res = C.ensureSchema(candidate);                   // older / newer / damaged files are rejected here; v4 is upgraded
+                        if (!names.some(n => ['commitments', 'expense_logs', 'events'].includes(n))) throw new Error('this file is not a tracker database');
+                        C.ensureSchema(candidate);                               // older / newer / damaged files are rejected here
                         const fname = String(name || 'imported.db').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255);
                         C.inTx(candidate, () => { C.writeSetting(candidate, 'dbName', fname); C.writeSetting(candidate, 'exportPending', '0'); });
                         db = candidate; clearTimeout(this._saveTimer);
                         this.loadDataFromDB(); this.persist({ toast: false, mark: false }); this.runLogQuery();
                         if (prev) prev.close();
-                        if (!quiet) this.showToast((res.upgradedFrom ? 'Imported and upgraded to the new format: ' : 'Imported: ') + fname);
+                        if (!quiet) this.showToast('Imported: ' + fname);
                         return true;
                     } catch (err) {
                         db = prev; try { candidate.close(); } catch (_) { } try { if (db) this.loadDataFromDB(); } catch (_) { }

@@ -3,8 +3,7 @@
  *  - occurrence generation + derived status for payment commitments (based on startDate / endDate)
  *  - dashboard time windows + analytics
  *  - SQL builder for the Expense Log (filter / multi-column sort / pagination)
- *  - schema v6 (v4 and v5 files are upgraded when opened: tables are rebuilt without the unused columns, "Bi-Monthly"
- *    becomes "Monthly, every 2", events get a repeat interval; anything older is rejected with a clear message)
+ *  - schema v6 (only v6 files are opened; older files are rejected unchanged - the v6.0 build converts v4 / v5 files)
  *  - settings (key/value, validated)
  *  - validation
  */
@@ -13,23 +12,15 @@
     const SCHEMA_VERSION = 6;
 
     /* ------------------------------------------------------------------ schema */
-    /* v6 changes (all applied by migrateToV6 when an older file is opened):
+    /* Schema v6:
      *  - commitments.every        : repeat interval. Monthly + every 2 = every 2 months, Yearly + every 5 = every 5 years.
-     *                               "Bi-Monthly" no longer exists (it is Monthly, every 2).
      *  - events.repeatUnit/Every  : None | Day | Week | Month | Year, every N. events.doneDate = the occurrence that was
      *                               ticked off (so a repeating task re-opens by itself for its next date).
-     *  - removed                  : region (commitments, expense_logs) and budget / currency / done / repeat (events).
-     *  - ids are plain INTEGER PRIMARY KEY (the app assigns them), so SQLite no longer keeps a sequence table. */
+     *  - ids are plain INTEGER PRIMARY KEY (the app assigns them). */
     const SCHEMA = {
         commitments:  { name: 'TEXT', category: 'TEXT', amount: 'REAL', currency: 'TEXT', frequency: 'TEXT', every: 'INTEGER', dueDay: 'INTEGER', dueMonth: 'INTEGER', startDate: 'TEXT', endDate: 'TEXT', method: 'TEXT', notes: 'TEXT', pausedMonth: 'TEXT', archived: 'INTEGER' },
         expense_logs: { actualDate: 'TEXT', commitmentDate: 'TEXT', commitmentId: 'INTEGER', category: 'TEXT', item: 'TEXT', amount: 'REAL', currency: 'TEXT', method: 'TEXT', notes: 'TEXT' },
         events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeatUnit: 'TEXT', repeatEvery: 'INTEGER', doneDate: 'TEXT', notes: 'TEXT' }
-    };
-    // What a v4 / v5 file must contain before it can be upgraded (v4 lacks the two pause / archive columns).
-    const OLD_SCHEMA = {
-        commitments:  ['name', 'category', 'amount', 'currency', 'frequency', 'dueDay', 'dueMonth', 'startDate', 'endDate', 'method', 'notes'],
-        expense_logs: ['actualDate', 'commitmentDate', 'commitmentId', 'category', 'item', 'amount', 'currency', 'method', 'notes'],
-        events:       ['title', 'kind', 'eventDate', 'repeat', 'budget', 'currency', 'done', 'notes']
     };
     // "Not required this time": one row per skipped due date.
     const SKIPS_DDL = 'CREATE TABLE IF NOT EXISTS skips (commitmentId INTEGER NOT NULL, commitmentDate TEXT NOT NULL, PRIMARY KEY (commitmentId, commitmentDate)) WITHOUT ROWID';
@@ -43,7 +34,6 @@
         'CREATE INDEX IF NOT EXISTS idx_logs_actual ON expense_logs(actualDate)',
         'CREATE INDEX IF NOT EXISTS idx_logs_commitment ON expense_logs(commitmentId, commitmentDate)'
     ];
-    const OLD_INDEXES = ['idx_commitments_dates', 'idx_events_date'];
     const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     /* ------------------------------------------------------------------ numbers */
@@ -420,35 +410,6 @@
         db.run(SKIPS_DDL);
         INDEXES.forEach(s => db.run(s));
     }
-    /* v4 / v5 -> v6. Every table is rebuilt in the new shape and the rows are copied across, so nothing is lost:
-     *  - Bi-Monthly -> Monthly, every 2 (same due dates: it keeps counting from the same first month)
-     *  - a Yearly event -> repeats every 1 year; a done task -> done on its date
-     *  - an event budget is kept as a line in its notes ("Budget: AED 500.00"); region is dropped (currency already tells)
-     * Runs inside the caller's transaction; the caller sets user_version. */
-    function migrateToV6(db) {
-        const cols = t => rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name), has = (t, c) => cols(t).includes(c);
-        const tables = listTables(db);
-        OLD_INDEXES.concat(['idx_logs_actual', 'idx_logs_commitment']).forEach(i => db.run(`DROP INDEX IF EXISTS ${i}`));
-        const rebuild = (t, select) => {
-            db.run(`ALTER TABLE ${t} RENAME TO ${t}_old`);
-            db.run(tableDDL(t));
-            db.run(`INSERT INTO ${t} (id, ${Object.keys(SCHEMA[t]).join(', ')}) SELECT id, ${select} FROM ${t}_old`);
-            db.run(`DROP TABLE ${t}_old`);
-        };
-        rebuild('commitments', `name, category, amount, currency, CASE frequency WHEN 'Bi-Monthly' THEN 'Monthly' ELSE frequency END, CASE frequency WHEN 'Bi-Monthly' THEN 2 ELSE 1 END,
-            dueDay, dueMonth, startDate, endDate, method, notes, ${has('commitments', 'pausedMonth') ? 'pausedMonth' : 'NULL'}, ${has('commitments', 'archived') ? 'archived' : '0'}`);
-        rebuild('expense_logs', 'actualDate, commitmentDate, commitmentId, category, item, amount, currency, method, notes');
-        rebuild('events', `title, kind, eventDate, CASE repeat WHEN 'Yearly' THEN 'Year' ELSE 'None' END, 1, CASE WHEN done <> 0 THEN eventDate END,
-            CASE WHEN budget > 0 THEN trim(notes || char(10) || 'Budget: ' || currency || ' ' || printf('%.2f', budget), char(10)) ELSE notes END`);
-        // settings and skips: same content, rebuilt as compact WITHOUT ROWID tables
-        [['settings', SETTINGS_DDL, 'key, value'], ['skips', SKIPS_DDL, 'commitmentId, commitmentDate']].forEach(([t, ddl, c]) => {
-            if (!tables.includes(t)) { db.run(ddl); return; }
-            db.run(`ALTER TABLE ${t} RENAME TO ${t}_old`); db.run(ddl);
-            db.run(`INSERT OR IGNORE INTO ${t} (${c}) SELECT ${c} FROM ${t}_old`); db.run(`DROP TABLE ${t}_old`);
-        });
-        db.run('DELETE FROM skips WHERE commitmentId NOT IN (SELECT id FROM commitments)');
-        INDEXES.forEach(s => db.run(s));
-    }
     const INS = t => `INSERT INTO ${t} (id, ${Object.keys(SCHEMA[t]).join(', ')}) VALUES (${['?'].concat(Object.keys(SCHEMA[t]).map(() => '?')).join(', ')})`;
     const UPSERT = t => INS(t).replace(/^INSERT/, 'INSERT OR REPLACE');
     // Turns an in-memory row into safe DB values (never throws, so a half-edited row can always be saved)
@@ -467,7 +428,6 @@
                 v = (v === null || v === undefined) ? '' : String(v);
                 if (c === 'pausedMonth' && !isMonthKey(v)) v = '';
                 if (c === 'doneDate' && !validISO(v)) v = '';
-                if (c === 'frequency' && v === 'Bi-Monthly') v = 'Monthly';          // pre-v6 name; the caller sets every = 2
                 if (ENUMS[c] && !ENUMS[c].includes(v)) v = DEFAULTS[c];
                 if (NULLABLE.has(c) && v === '') v = null;
                 else if (v === '' && DEFAULTS[c] && c !== 'category') v = DEFAULTS[c];
@@ -478,31 +438,22 @@
     }
     function inTx(db, fn) { db.run('BEGIN'); try { const r = fn(); db.run('COMMIT'); return r; } catch (e) { try { db.run('ROLLBACK'); } catch (_) { } throw e; } }
 
-    // Opens a tracker database. Empty -> fresh v6. v6 -> checked. v4 / v5 -> checked, then upgraded in one transaction
-    // (see migrateToV6). Older / newer / damaged files are rejected and NOT changed.
+    // Opens a tracker database. Empty -> fresh v6. v6 -> checked (missing optional tables / indexes are added).
+    // Anything else is rejected and NOT changed.
     function ensureSchema(db) {
         const ver = getVersion(db), tables = listTables(db), fail = (code, msg) => { const e = new Error(msg); e.code = code; return e; };
         if (ver > SCHEMA_VERSION) throw fail('NEWER_SCHEMA', `This database was created by a newer app version (schema ${ver}). Reload the app to update it, then try again.`);
-        const check = (need, v) => {
-            for (const [t, cols] of Object.entries(need)) {
-                if (!tables.includes(t)) throw fail('BAD_SCHEMA', `This v${v} database is missing the "${t}" table.`);
-                const have = rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name);
-                const miss = cols.filter(c => !have.includes(c));
+        if (ver === SCHEMA_VERSION) {
+            for (const [t, cols] of Object.entries(SCHEMA)) {
+                if (!tables.includes(t)) throw fail('BAD_SCHEMA', `This database is missing the "${t}" table.`);
+                const have = rowsOf(db, `PRAGMA table_info(${t})`).map(r => r.name), miss = Object.keys(cols).filter(c => !have.includes(c));
                 if (miss.length) throw fail('BAD_SCHEMA', `Table "${t}" is missing column(s): ${miss.join(', ')}.`);
             }
-        };
-        if (ver === SCHEMA_VERSION) {
-            check(Object.fromEntries(Object.entries(SCHEMA).map(([t, c]) => [t, Object.keys(c)])), ver);
-            createSchema(db);                                    // only adds the settings / skips tables and indexes if they are missing
+            createSchema(db);
             return { fresh: false };
         }
-        if (ver === 4 || ver === 5) {
-            check(OLD_SCHEMA, ver);
-            inTx(db, () => { migrateToV6(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); });
-            return { fresh: false, upgradedFrom: ver };
-        }
         if (!tables.length) { inTx(db, () => { createSchema(db); db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); }); return { fresh: true }; }
-        throw fail('OLD_SCHEMA', `This database is from an older version (schema ${ver}). Older files are no longer converted - open it once in the v4.0 build, export it, and import that file here.`);
+        throw fail('OLD_SCHEMA', `This database is in an older format (schema ${ver}), which this version no longer converts. Open it once in app version 6.0, export it, and import that file here.`);
     }
 
     /* ------------------------------------------------------------------ settings (stored in the database, validated on read and write) */
