@@ -83,15 +83,15 @@
 
         /* ---- events & tasks: days to remember, and things to tick off (once, or every day / week / month) ---- */
         const events = [];
-        const ev = o => events.push(Object.assign({ id: events.length + 1, kind: 'Event', repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: '' }, o));
+        const ev = o => events.push(Object.assign({ id: events.length + 1, kind: 'Event', repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: '', priority: 0 }, o));
         const ago = n => C.addDays(today, -n), yearsAgo = (yrs, plusDays) => { const [yy, mm, dd] = C.ymd(C.addDays(today, plusDays)); return C.iso(yy - yrs, mm, C.clampDay(yy - yrs, mm, dd)); };
         ev({ title: 'Learn Spanish - 20 minutes', kind: 'Task', eventDate: ago(40), repeatUnit: 'Day', endDate: C.addDays(today, 50), notes: 'A 90-day plan.\nLesson first, then 10 new words.\nSpeak them out loud.' });
         ev({ title: 'Evening walk', kind: 'Task', eventDate: ago(25), repeatUnit: 'Day', doneDate: today });
         ev({ title: 'Call parents', kind: 'Task', eventDate: ago(30), repeatUnit: 'Week' });
         ev({ title: 'Water the plants', kind: 'Task', eventDate: ago(21), repeatUnit: 'Day', repeatEvery: 3 });
         ev({ title: 'Review monthly budget', kind: 'Task', eventDate: C.addDays(firstOf(-3), 27), repeatUnit: 'Month' });
-        ev({ title: 'Dentist appointment', kind: 'Task', eventDate: today });
-        ev({ title: 'Renew passport', kind: 'Task', eventDate: ago(3), notes: 'Photos and the old passport are needed.' });
+        ev({ title: 'Dentist appointment', kind: 'Task', priority: 1, eventDate: today });
+        ev({ title: 'Renew passport', kind: 'Task', priority: 2, eventDate: ago(3), notes: 'Photos and the old passport are needed.' });
         ev({ title: 'Car service', kind: 'Task', eventDate: C.addDays(today, 5), repeatUnit: 'Month', repeatEvery: 6 });
         ev({ title: 'Mom’s birthday', eventDate: yearsAgo(58, 9), repeatUnit: 'Year' });
         ev({ title: 'Wedding anniversary', eventDate: yearsAgo(7, 24), repeatUnit: 'Year' });
@@ -101,7 +101,7 @@
         ev({ title: 'File the yearly tax return', kind: 'Task', eventDate: ago(30), doneDate: ago(30) });
         ev({ title: 'Physiotherapy exercises', kind: 'Task', eventDate: ago(60), repeatUnit: 'Day', endDate: ago(10), notes: 'Six-week course, finished.' });
         ev({ title: 'Shopping list', kind: 'Note', eventDate: '', notes: 'Milk\nEggs\nCoffee beans\nLight bulbs for the hallway' });
-        ev({ title: 'Wi-Fi and router', kind: 'Note', eventDate: '', notes: 'Router is behind the TV.\nRestart: hold the button for 5 seconds.\nSupport line is on the sticker underneath.' });
+        ev({ title: 'Wi-Fi and router', kind: 'Note', priority: 1, eventDate: '', notes: 'Router is behind the TV.\nRestart: hold the button for 5 seconds.\nSupport line is on the sticker underneath.' });
         ev({ title: 'Gift ideas', kind: 'Note', eventDate: '', notes: 'Mom: a scarf, the cookbook she mentioned\nBest friend: concert tickets' });
 
         return { commitments, logs, events, skips };

@@ -37,7 +37,7 @@
     const DUE_RANGES = [['window', 'This dashboard window'], ['month', 'Today → end of this month'], ['d7', 'Next 7 days'], ['d14', 'Next 14 days'], ['d30', 'Next 30 days'], ['d60', 'Next 60 days'], ['d90', 'Next 90 days']];
     const DUE_STATUS = ['All', 'Unpaid', 'Overdue', 'Pending', 'Paid', 'Paused', 'Skipped'];
     const BLANK_DUEF = () => ({ q: '', cat: 'All', cid: 'All', min: '', max: '', overdue: false, curs: [] });      // curs: [] = every currency
-    const BLANK_EF = () => ({ q: '', kind: 'All', status: 'All', repeat: 'All', from: '', to: '', showDone: true });
+    const BLANK_EF = () => ({ q: '', kind: 'All', status: 'All', repeat: 'All', priority: 'All', from: '', to: '', showDone: true });
     // Status filter of the Events tab: one choice covers the matching task and event states.
     const EV_STATUS = { All: null, Overdue: ['Overdue'], Today: ['Due today', 'Today'], Coming: ['Open', 'Upcoming'], Done: ['Done'], Over: ['Ended', 'Past'] };
     // CSV writing. Text that a spreadsheet would run as a formula is prefixed with ' ; quotes, commas and line breaks are quoted.
@@ -111,7 +111,7 @@
             lPage: 0, lPageSize: 25, lStale: false,
             ef: BLANK_EF(), showEvFilters: false, evImport: { show: false, name: '', rows: [], skipped: [], dupes: 0 },
             dash: { mode: 'this', fromM: m0, fromY: y0, toM: m0, toY: y0, year: y0 }, dueRange: 'window', dueRanges: DUE_RANGES, dueF: BLANK_DUEF(), dueSel: [], showDueFilters: false, bdMode: 'auto', bdGroup: 'category',
-            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '7.0.1',
+            settings: { autoSave: false, theme: 'system', dbName: '', lastExport: '', exportPending: false }, sysDark: true, appVersion: '8.0.0',
             modal: { show: false, kind: 'c', isNew: false, item: null, orig: null },
             toast: { show: false, message: '', type: 'success' },
             dueFilter: 'All', colors: COLOR, lSel: [], note: { show: false, title: '', text: '', draft: '', k: '', row: null },
@@ -140,6 +140,7 @@
                 const lt = store.get(LS_THEME); if (C.SETTINGS.theme.ok(String(lt))) this.settings.theme = lt;     // until the DB is open
                 this.applyTheme();
                 document.addEventListener('visibilitychange', () => { if (!document.hidden) { this.clock = Date.now(); this.rev++; } });
+                let day = C.todayISO(); setInterval(() => { const d = C.todayISO(); if (d !== day) { day = d; this.clock = Date.now(); this.rev++; this.refreshEvents(); } }, 30000);      // a new day while the app stays open
                 window.addEventListener('beforeunload', e => {
                     if (this.demo) return;
                     if (this.saveState === 'dirty' && db && this.settings.autoSave) this.persist({ toast: false });
@@ -226,7 +227,7 @@
                 const R = t => C.rowsOf(db, `SELECT * FROM ${t} ORDER BY id`).map(clean);
                 this.commitments = R('commitments').map(r => ({ ...r, amount: C.toMoney(r.amount), every: C.everyOf(r), dueDay: C.toInt(r.dueDay) ?? '', dueMonth: C.toInt(r.dueMonth) ?? '', pausedMonth: C.isMonthKey(r.pausedMonth) ? r.pausedMonth : '', archived: r.archived ? 1 : 0 }));
                 this.expenseLogs = R('expense_logs').map(r => ({ ...r, amount: C.toMoney(r.amount), commitmentId: C.toInt(r.commitmentId) ?? '' }));
-                this.events = R('events').map(r => ({ ...r, repeatUnit: C.ENUMS.repeatUnit.includes(r.repeatUnit) ? r.repeatUnit : 'None', repeatEvery: C.toInt(r.repeatEvery) || 1, endDate: C.validISO(r.endDate) ? r.endDate : '', doneDate: C.validISO(r.doneDate) ? r.doneDate : '' }));
+                this.events = R('events').map(r => ({ ...r, repeatUnit: C.ENUMS.repeatUnit.includes(r.repeatUnit) ? r.repeatUnit : 'None', repeatEvery: C.toInt(r.repeatEvery) || 1, endDate: C.validISO(r.endDate) ? r.endDate : '', doneDate: C.validISO(r.doneDate) ? r.doneDate : '', priority: C.priorityOf(r) }));
                 try { this.skips = C.rowsOf(db, 'SELECT commitmentId, commitmentDate FROM skips').filter(k => C.toInt(k.commitmentId) && C.validISO(k.commitmentDate)); } catch (e) { this.skips = []; }
                 this.selectedRowIds = []; this.lSel = []; this.dueSel = []; this.dueOpen = '';
                 this.loadSettings();
@@ -348,7 +349,7 @@
             discardChanges() {
                 if (!db) return;
                 if (!confirm('Discard all unsaved changes' + (this.draftCount ? ` and ${this.draftCount} unsaved new row(s)` : '') + '?\nThe last saved version is reloaded.')) return;
-                clearTimeout(this._saveTimer); this.closeModal();
+                clearTimeout(this._saveTimer); this.closeModal(); this.note.show = false;
                 this.loadDataFromDB(); this.saveState = 'saved'; this.runLogQuery();
                 this.showToast('Unsaved changes discarded.', 'info');
             },
@@ -553,7 +554,7 @@
                 const t = this.today;
                 return k === 'c' ? { name: '', category: '', amount: '', currency: 'AED', frequency: 'Monthly', every: 1, dueDay: C.ymd(t)[2], dueMonth: '', startDate: t, endDate: '', method: '', notes: '', pausedMonth: '', archived: 0 }
                     : k === 'l' ? { actualDate: t, commitmentDate: '', commitmentId: '', category: '', item: '', amount: '', currency: 'AED', method: '', notes: '' }
-                        : { title: '', kind: 'Event', eventDate: t, repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: '' };
+                        : { title: '', kind: 'Task', eventDate: t, repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: '', priority: 0 };
             },
             arrOf(k) { return k === 'c' ? 'commitments' : k === 'l' ? 'expenseLogs' : 'events'; },
             // Desktop: inline draft pinned on top (never sorted). Mobile: full-screen form, row is created on Save.
@@ -892,6 +893,7 @@
             evMatch(e) {
                 const f = this.ef, t = this.today, q = f.q.trim().toLowerCase(), st = EV_STATUS[f.status];
                 if (f.kind !== 'All' && e.kind !== f.kind) return false;
+                if (['0', '1', '2'].includes(String(f.priority)) && C.priorityOf(e) !== Number(f.priority)) return false;
                 if (!f.showDone && C.eventClosed(e, t)) return false;
                 if (q && !((e.title || '') + '\n' + (e.notes || '')).toLowerCase().includes(q)) return false;
                 if (st && !st.includes(C.eventState(e, t))) return false;
@@ -899,12 +901,15 @@
                 if (C.validISO(f.from) || C.validISO(f.to)) { const n = C.nextEventDate(e, t); if (!n || (C.validISO(f.from) && n < f.from) || (C.validISO(f.to) && n > f.to)) return false; }
                 return true;
             },
-            get activeEvFilters() { const f = this.ef; return (f.q.trim() ? 1 : 0) + ['kind', 'status', 'repeat'].filter(k => f[k] !== 'All').length + (f.from || f.to ? 1 : 0) + (f.showDone ? 0 : 1); },
+            get activeEvFilters() { const f = this.ef; return (f.q.trim() ? 1 : 0) + ['kind', 'status', 'repeat', 'priority'].filter(k => f[k] !== undefined && f[k] !== 'All').length + (f.from || f.to ? 1 : 0) + (f.showDone ? 0 : 1); },
             resetEvFilters() { this.ef = BLANK_EF(); },
-            sortedEventIds() {           // open items by date, then closed ones (done / ended / past), then notes by title
-                const t = this.today, rank = e => (e.kind === 'Note' ? 2 : C.eventClosed(e, t) ? 1 : 0);
+            /* Order: what still needs attention first, and inside that red, then yellow, then normal.
+             *   1. open events / tasks and all notes - by priority, then dated rows by date, then notes by title
+             *   2. closed rows (done / ended / past) - same order                                              */
+            sortedEventIds() {
+                const t = this.today, closed = e => (C.eventClosed(e, t) ? 1 : 0), note = e => (e.kind === 'Note' ? 1 : 0);
                 return this.events.filter(e => !e._draft && this.evMatch(e))
-                    .sort((a, b) => (rank(a) - rank(b)) || ((C.nextEventDate(a, t) || '9999').localeCompare(C.nextEventDate(b, t) || '9999')) || (a.title || '').localeCompare(b.title || '')).map(e => e.id);
+                    .sort((a, b) => (closed(a) - closed(b)) || (C.priorityOf(b) - C.priorityOf(a)) || (note(a) - note(b)) || ((C.nextEventDate(a, t) || '9999').localeCompare(C.nextEventDate(b, t) || '9999')) || (a.title || '').localeCompare(b.title || '')).map(e => e.id);
             },
             refreshEvents() { this.rev++; const drafts = this.events.filter(e => e._draft).map(e => e.id).reverse(); this.eView = [...drafts, ...this.sortedEventIds()]; },
             get eRows() { const m = new Map(this.events.map(e => [e.id, e])); return this.eView.map(id => m.get(id)).filter(Boolean); },
@@ -917,6 +922,21 @@
                 if (!this.save([['UPDATE events SET doneDate = ? WHERE id = ?', [e.doneDate || null, Number(e.id)]]])) return;
                 this.showToast(was ? 'Task re-opened.' : (e.repeatUnit !== 'None' && d.next ? `Done. It comes back on ${C.fmtDate(d.next)}.` : 'Task marked done.'), 'info');
             },
+            /* ----- priority colour: normal -> yellow -> red -> normal with one tap (saved straight away) ----- */
+            prio(e) { return C.priorityOf(e); },
+            prioName(e) { return C.PRIORITIES[C.priorityOf(e)]; },
+            // Fixed colours (not theme colours), so yellow and red look the same in the light and the dark theme.
+            prioDot(e) { return C.priorityOf(e) ? '' : 'bg-slate-700 text-slate-300'; },                                                              // the tappable chip
+            prioDotStyle(e) { return ['', 'background:#facc15;color:#1e293b', 'background:#ef4444;color:#ffffff'][C.priorityOf(e)]; },
+            prioEdgeStyle(e) { return ['', 'border-left:4px solid #facc15', 'border-left:4px solid #ef4444'][C.priorityOf(e)]; },                     // left edge of a card
+            prioRowStyle(e) { return ['', 'background:rgba(250,204,21,.13)', 'background:rgba(239,68,68,.10)'][C.priorityOf(e)]; },                    // tint of a table row
+            setPriority(e, p) {
+                p = C.priorityOf({ priority: p }); if (p === C.priorityOf(e)) return;
+                e.priority = p; this.rev++;
+                if (e._draft) return;                                     // a new row is saved with "Save row"
+                if (this.save([['UPDATE events SET priority = ? WHERE id = ?', [p, Number(e.id)]]])) this.refreshEvents();
+            },
+            cyclePriority(e) { this.setPriority(e, (C.priorityOf(e) + 1) % 3); },
             onRepeatChange(e) { if (e.repeatUnit === 'None') { e.repeatEvery = 1; e.endDate = ''; } else if (!(C.toInt(e.repeatEvery) >= 1)) e.repeatEvery = 1; this.rev++; },
             // A note has no date or repeat; turning a note back into an event / task gives it today's date to start from.
             onKindChange(e) { if (e.kind === 'Note') { e.eventDate = ''; e.repeatUnit = 'None'; e.repeatEvery = 1; e.endDate = ''; e.doneDate = ''; } else if (!C.validISO(e.eventDate)) e.eventDate = this.today; this.rev++; },
@@ -928,12 +948,12 @@
                     this.events.forEach(e => {
                         if (e._draft || e.kind === 'Note' || C.eventClosed(e, t)) return;
                         const n = C.nextEventDate(e, t); if (!n) return;
-                        const days = C.daysBetween(t, n), r = { id: e.id, title: e.title || 'Untitled', kind: e.kind, date: n, days, repeat: e.repeatUnit !== 'None' ? C.repeatLabel(e).toLowerCase() : '', e };
+                        const days = C.daysBetween(t, n), r = { id: e.id, title: e.title || 'Untitled', kind: e.kind, date: n, days, p: C.priorityOf(e), repeat: e.repeatUnit !== 'None' ? C.repeatLabel(e).toLowerCase() : '', e };
                         if (days < 0) out.overdue.push(r); else if (days === 0) out.today.push(r); else if (days <= 45) out.soon.push(r);
                     });
-                    const by = (a, b) => a.days - b.days || a.title.localeCompare(b.title);
+                    const by = (a, b) => b.p - a.p || a.days - b.days || a.title.localeCompare(b.title);          // red and yellow first
                     out.overdue.sort(by); out.today.sort(by); out.soon.sort(by);
-                    return { ...out, now: [...out.overdue, ...out.today], n: out.overdue.length + out.today.length };
+                    return { ...out, now: [...out.overdue, ...out.today].sort(by), n: out.overdue.length + out.today.length };
                 });
             },
             remWhen(r) { return r.days < 0 ? Math.abs(r.days) + (r.days === -1 ? ' day' : ' days') + ' overdue' : r.days === 0 ? 'Today' : r.days === 1 ? 'Tomorrow' : 'in ' + r.days + ' days'; },
@@ -962,14 +982,14 @@
             },
             eventsTemplateCSV() {
                 const t = this.today;
-                csvSave([C.EVENT_CSV_COLUMNS, ['Mom birthday', 'Event', '1968-11-24', 'Year', 1, '', ''], ['Learn Spanish 20 min', 'Task', t, 'Day', 1, C.addDays(t, 90), 'Lesson, then ten new words'],
-                    ['Call parents', 'Task', t, 'Week', 2, '', ''], ['Renew passport', 'Task', C.addDays(t, 30), 'None', '', '', 'Photos needed'], ['Shopping list', 'Note', '', '', '', '', 'Milk\nEggs']], 'tracker_events_template.csv');
+                csvSave([C.EVENT_CSV_COLUMNS, ['Mom birthday', 'Event', '1968-11-24', 'Year', 1, '', 'Yellow', ''], ['Learn Spanish 20 min', 'Task', t, 'Day', 1, C.addDays(t, 90), 'Normal', 'Lesson, then ten new words'],
+                    ['Call parents', 'Task', t, 'Week', 2, '', '', ''], ['Renew passport', 'Task', C.addDays(t, 30), 'None', '', '', 'Red', 'Photos needed'], ['Shopping list', 'Note', '', '', '', '', '', 'Milk\nEggs']], 'tracker_events_template.csv');
             },
 
             /* ----- CSV of what a tab is showing (its filters and sort applied). Real values, even while the mask is on. ----- */
             exportEventsCSV() {
                 const rows = this.eRows.filter(e => !e._draft); if (!rows.length) { this.showToast('Nothing to export with these filters.', 'info'); return; }
-                csvSave([[...C.EVENT_CSV_COLUMNS, 'Next date', 'Status', 'Done on'], ...rows.map(e => [e.title, e.kind, e.eventDate, e.kind === 'Note' ? '' : e.repeatUnit, e.repeatUnit !== 'None' ? e.repeatEvery : '', e.endDate, e.notes, this.evNext(e), this.evState(e), e.doneDate])], 'tracker_events_' + stamp() + '.csv');
+                csvSave([[...C.EVENT_CSV_COLUMNS, 'Next date', 'Status', 'Done on'], ...rows.map(e => [e.title, e.kind, e.eventDate, e.kind === 'Note' ? '' : e.repeatUnit, e.repeatUnit !== 'None' ? e.repeatEvery : '', e.endDate, C.PRIORITIES[C.priorityOf(e)], e.notes, this.evNext(e), this.evState(e), e.doneDate])], 'tracker_events_' + stamp() + '.csv');
                 this.showToast(`Exported ${rows.length} row(s).`);
             },
             exportPayCSV() {
@@ -997,8 +1017,8 @@
                     ['Due dates', this.dueSpan.label + (this.dueFilter !== 'All' || this.activeDueFilters ? ' (filtered as on screen)' : '')],
                     ['Due date', 'Commitment', 'Category', 'Amount', 'Currency', 'Status', 'Paid on', 'Method'],
                     ...this.dueRows.map(o => [o.date, o.c.name, o.c.category, o.amount, o.currency, this.dueState(o), o.paid && o.log ? o.log.actualDate : '', o.c.method]), [],
-                    ['Events and tasks', 'overdue, today and the next 45 days'], ['Date', 'Title', 'Kind', 'When', 'Repeats'],
-                    ...[...this.reminders.overdue, ...this.reminders.today, ...this.reminders.soon].map(r => [r.date, r.title, r.kind, this.remWhen(r), r.repeat])];
+                    ['Events and tasks', 'overdue, today and the next 45 days'], ['Date', 'Title', 'Kind', 'When', 'Repeats', 'Priority'],
+                    ...[...this.reminders.overdue, ...this.reminders.today, ...this.reminders.soon].map(r => [r.date, r.title, r.kind, this.remWhen(r), r.repeat, C.PRIORITIES[r.p]])];
                 csvSave(rows, 'tracker_dashboard_' + stamp() + '.csv');
                 this.showToast('Dashboard exported.');
             },
@@ -1282,7 +1302,7 @@
                         C.ensureSchema(candidate);                               // older / newer / damaged files are rejected here
                         const fname = String(name || 'imported.db').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255);
                         C.inTx(candidate, () => { C.writeSetting(candidate, 'dbName', fname); C.writeSetting(candidate, 'exportPending', '0'); });
-                        db = candidate; clearTimeout(this._saveTimer);
+                        db = candidate; clearTimeout(this._saveTimer); this.closeModal(); this.note.show = false; this.evImport.show = false;
                         this.loadDataFromDB(); this.persist({ toast: false, mark: false }); this.runLogQuery();
                         if (prev) prev.close();
                         if (!quiet) this.showToast('Imported: ' + fname);
@@ -1319,6 +1339,7 @@
              *   both changed, or this device has data and has never synced -> ask (never guess)                       */
             async cloudSync(interactive) {
                 const B = window.CloudBackup; if (!B || this.demo || !B.isConnected('ms') || this._syncBusy || !db) return;
+                if (!interactive && (this.modal.show || this.note.show || this.evImport.show)) return;          // something is being edited: check again next time
                 this._syncBusy = true; const c = this.cloud; c.hint = '';
                 try {
                     const r = await B.checkSync('ms', !!interactive);

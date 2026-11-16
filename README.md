@@ -5,7 +5,7 @@ A private tracker for recurring payments, everyday expenses, events and tasks. I
 - **Use it:** <https://tracker.gowthams.com>
 - **Try it with sample data:** <https://tracker.gowthams.com/?demo=1>
 
-Current version: 7.0.1
+Current version: 8.0.0
 
 ## What it does
 
@@ -67,7 +67,9 @@ Status is worked out from the due dates and the linked payments; it is never sto
 ## Events, tasks and notes
 
 - **Notes on anything.** The note icon on a row opens an editor for as many lines as you like. A **Note** is its own kind of row: a title and text, no date.
-- **Search and filters.** Search looks in titles and notes. Filter by kind, status, how it repeats, and a range for the next date, or hide what is done, ended or past.
+- **Priority.** Every event, task and note can be normal, yellow or red. Tap the flag on a phone card, or the row number in the table, to step through the three; it is saved at once. Red rows sort first, then yellow, then normal. Rows that are done, ended or past stay at the bottom whatever their colour.
+- **Search and filters.** Search looks in titles and notes. Filter by kind, status, how it repeats, priority, and a range for the next date, or hide what is done, ended or past.
+- **New rows start as a task.** Change the kind to Event or Note in the row or the form.
 - **Reminders.** The dashboard lists tasks and events that are overdue or due today, with a tick button for tasks, and folds the next 45 days below. The Events button in the navigation shows how many are waiting.
 
 ### Bulk import from CSV
@@ -77,11 +79,12 @@ Status is worked out from the due dates and the linked payments; it is never sto
 | Column | Values |
 |---|---|
 | Title | Required |
-| Kind | `Event`, `Task` or `Note`. Empty means Event |
+| Kind | `Event`, `Task` or `Note`. Empty means Task |
 | Date | Required except for notes. `2026-11-15`, `15/11/2026` or `15 Nov 2026`. Day comes first in slash dates |
 | Repeat | `None`, `Day`, `Week`, `Month`, `Year`. Also `daily`, `weekly`, `Every 2 weeks` |
 | Every | A whole number, 1–120. Empty means 1 |
 | End date | Optional, for repeating rows |
+| Priority | `Normal`, `Yellow` or `Red`. Also `high`, `medium`, or 0–2. Empty means Normal |
 | Notes | Optional; may span several lines inside quotes |
 
 Columns can be in any order and extra columns are ignored. A spreadsheet set to month-first dates would turn 5 March into 3 May, so check dates where the day is 12 or lower.
@@ -172,13 +175,13 @@ If you host the app at another address, use that address in the steps above. The
 
 ## Data model
 
-Schema version 7 (`PRAGMA user_version = 7`). A version 6 file gets the one new column when it is opened or imported. Older files are refused and left unchanged; app version 6.0 (see the commit history) is the one that converts version 4 and 5 files. Data in a browser that is still in an older format is set aside, not deleted. A device still running an older app version cannot open a version 7 file until it reloads and updates, which also stops it from saving over the new fields.
+Schema version 8 (`PRAGMA user_version = 8`). A version 6 or 7 file gets the new columns when it is opened or imported. Older files are refused and left unchanged; app version 6.0 (see the commit history) is the one that converts version 4 and 5 files. Data in a browser that is still in an older format is set aside, not deleted. A device still running an older app version cannot open a version 8 file until it reloads and updates, which also stops it from saving over the new fields.
 
 | Table | Holds |
 |---|---|
 | `commitments` | name, category, amount, currency, frequency (`Monthly`, `Yearly`, `One-Time`), `every` (the interval), due day and month, start and end date, method, notes, paused month, archived flag |
 | `expense_logs` | actual date, description, category, amount, currency, method, notes, and the linked commitment and due date for payments |
-| `events` | title, kind (`Event`, `Task` or `Note`), first date (empty for a note), `repeatUnit` (`None`, `Day`, `Week`, `Month`, `Year`), `repeatEvery`, `endDate` (last day of a repeating series, empty for no end), `doneDate` (the date that was ticked off), notes |
+| `events` | title, kind (`Event`, `Task` or `Note`), first date (empty for a note), `repeatUnit` (`None`, `Day`, `Week`, `Month`, `Year`), `repeatEvery`, `endDate` (last day of a repeating series, empty for no end), `doneDate` (the date that was ticked off), notes, `priority` (0 normal, 1 yellow, 2 red) |
 | `skips` | commitment and due date marked *not required* |
 | `settings` | auto-save, theme, last imported and exported file names |
 
@@ -223,6 +226,7 @@ When releasing, change the version in three places so browsers and installed app
 
 ## Recent changes
 
+- **8.0** Priority colours (normal, yellow, red) for events, tasks and notes, sorted to the top. New rows start as a task. Fixes: the day now rolls over while the app stays open; a cloud check no longer replaces data under an open editor; "Mark paid" on a commitment that has not started yet skips a first date already paid. Database format 8 (one new column).
 - **7.0** Events tab: notes editor, a Note kind without a date, end dates, search and filters, bulk import from CSV. Export of what each tab is showing, and of the dashboard. Reminders on the dashboard. Database format 7 (one new column).
 - **6.1** Type any repeat interval in the table as well as the form. Payments made in another month than their due date are explained on the dashboard. The converter for version 4 and 5 files was removed.
 - **6.0** New name. Payments every N months or years. Events and tasks repeat every N days, weeks, months or years, and tasks re-open by themselves; event budgets removed. One-tap time window; due dates first on the dashboard; plainer chart wording. Database format 6.

@@ -3,27 +3,28 @@
  *  - occurrence generation + derived status for payment commitments (based on startDate / endDate)
  *  - dashboard time windows + analytics
  *  - SQL builder for the Expense Log (filter / multi-column sort / pagination)
- *  - schema v7 (v6 files get the one new column when opened; anything older is rejected unchanged - the v6.0 build
+ *  - schema v8 (v6 / v7 files get the new columns when opened; anything older is rejected unchanged - the v6.0 build
  *    converts v4 / v5 files)
  *  - settings (key/value, validated)
  *  - validation
  */
 (function (root) {
     'use strict';
-    const SCHEMA_VERSION = 7;
+    const SCHEMA_VERSION = 8;
 
     /* ------------------------------------------------------------------ schema */
-    /* Schema v7 (v6 + events.endDate and the 'Note' kind):
+    /* Schema v8 (v6 + events.endDate, the 'Note' kind and events.priority):
      *  - commitments.every        : repeat interval. Monthly + every 2 = every 2 months, Yearly + every 5 = every 5 years.
      *  - events.repeatUnit/Every  : None | Day | Week | Month | Year, every N. events.doneDate = the occurrence that was
      *                               ticked off (so a repeating task re-opens by itself for its next date).
      *  - events.endDate           : last day of a repeating series (empty = no end).
      *  - events.kind 'Note'       : free text without a date (title + notes only).
+     *  - events.priority          : 0 normal, 1 yellow, 2 red. Higher sorts first.
      *  - ids are plain INTEGER PRIMARY KEY (the app assigns them). */
     const SCHEMA = {
         commitments:  { name: 'TEXT', category: 'TEXT', amount: 'REAL', currency: 'TEXT', frequency: 'TEXT', every: 'INTEGER', dueDay: 'INTEGER', dueMonth: 'INTEGER', startDate: 'TEXT', endDate: 'TEXT', method: 'TEXT', notes: 'TEXT', pausedMonth: 'TEXT', archived: 'INTEGER' },
         expense_logs: { actualDate: 'TEXT', commitmentDate: 'TEXT', commitmentId: 'INTEGER', category: 'TEXT', item: 'TEXT', amount: 'REAL', currency: 'TEXT', method: 'TEXT', notes: 'TEXT' },
-        events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeatUnit: 'TEXT', repeatEvery: 'INTEGER', endDate: 'TEXT', doneDate: 'TEXT', notes: 'TEXT' }
+        events:       { title: 'TEXT', kind: 'TEXT', eventDate: 'TEXT', repeatUnit: 'TEXT', repeatEvery: 'INTEGER', endDate: 'TEXT', doneDate: 'TEXT', notes: 'TEXT', priority: 'INTEGER' }
     };
     // "Not required this time": one row per skipped due date.
     const SKIPS_DDL = 'CREATE TABLE IF NOT EXISTS skips (commitmentId INTEGER NOT NULL, commitmentDate TEXT NOT NULL, PRIMARY KEY (commitmentId, commitmentDate)) WITHOUT ROWID';
@@ -149,7 +150,7 @@
         const pausedDue = pz ? thisMonth.filter(d => !settled(d)) : [];
         const r = { ...base, missed, next: missed[0] || nextUnpaid, paidCount: occ.filter(isPaid).length, skippedCount: occ.filter(isSkipped).length, total: finite ? occ.length : 0, paused: pz, pausedDue };
         if (isArchived(c)) return { ...r, status: 'Archived' };
-        if (today < c.startDate) return { ...r, status: 'Upcoming', next: occ.find(d => !skip(d)) || '' };
+        if (today < c.startDate) return { ...r, status: 'Upcoming', next: occ.find(d => !settled(d) && !skip(d)) || '' };      // first due date that is still open (one may be paid in advance)
         if (missed.length) return { ...r, status: 'Overdue' };
         if (finite && ((occ.length && occ.every(settled)) || (!occ.length && c.endDate < today))) return { ...r, status: 'Completed' };
         if (pausedDue.length) return { ...r, status: 'Paused' };
@@ -330,6 +331,9 @@
         const [y, m, d] = ymd(e.eventDate), [yy, mm] = addMonths(y, m, unit === 'Year' ? 12 * n : n);
         return iso(yy, mm, clampDay(yy, mm, d));
     }
+    // Priority colour of an event / task / note: 0 normal, 1 yellow, 2 red.
+    const PRIORITIES = ['Normal', 'Yellow', 'Red'];
+    const priorityOf = e => { const n = toInt(e.priority); return n === 1 || n === 2 ? n : 0; };
     // Last day of a repeating series ('' = it never ends). A one-off item has no series, so its end date is ignored.
     const seriesEnd = e => repeatOf(e) && validISO(e.endDate) ? e.endDate : '';
     // cur   = the date this event / task is "about" now: its latest date up to today (the first date while that is still ahead)
@@ -413,24 +417,26 @@
     }
     /* Turns a CSV into event / task / note rows. The first line names the columns (any order, extra columns ignored):
      *   Title*, Kind (Event | Task | Note), Date* (not for notes), Repeat (None | Day | Week | Month | Year), Every (number),
-     *   End date, Notes.   "Repeat" also accepts daily / weekly / monthly / yearly and "Every 2 weeks".
+     *   End date, Priority (Normal | Yellow | Red), Notes.   "Repeat" also accepts daily / weekly / monthly / yearly and "Every 2 weeks".
      * Returns { rows, skipped: [{ line, reason }] }. Nothing is written here. */
-    const EVENT_CSV_COLUMNS = ['Title', 'Kind', 'Date', 'Repeat', 'Every', 'End date', 'Notes'];
+    const EVENT_CSV_COLUMNS = ['Title', 'Kind', 'Date', 'Repeat', 'Every', 'End date', 'Priority', 'Notes'];
     function eventsFromCSV(text) {
         const data = parseCSV(text), out = { rows: [], skipped: [] };
         if (!data.length) { out.skipped.push({ line: 1, reason: 'The file is empty' }); return out; }
         const norm = v => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
         const head = data[0].map(norm), col = (...names) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; };
         const iTitle = col('title', 'name', 'event', 'task'), iKind = col('kind', 'type'), iDate = col('date', 'eventdate', 'firstdate', 'startdate'), iRep = col('repeat', 'repeats', 'repeatunit', 'frequency'),
-            iEvery = col('every', 'repeatevery', 'interval'), iEnd = col('enddate', 'end', 'until'), iNotes = col('notes', 'note', 'details', 'text');
+            iEvery = col('every', 'repeatevery', 'interval'), iEnd = col('enddate', 'end', 'until'), iNotes = col('notes', 'note', 'details', 'text'), iPrio = col('priority', 'colour', 'color', 'flag');
+        const PRIO = { '': 0, normal: 0, none: 0, low: 0, yellow: 1, medium: 1, amber: 1, red: 2, high: 2, urgent: 2, important: 2 };
         if (iTitle < 0) { out.skipped.push({ line: 1, reason: 'The first line must name the columns and include "Title"' }); return out; }
         const UNITS = { none: 'None', no: 'None', '': 'None', doesnotrepeat: 'None', day: 'Day', days: 'Day', daily: 'Day', everyday: 'Day', week: 'Week', weeks: 'Week', weekly: 'Week', month: 'Month', months: 'Month', monthly: 'Month', year: 'Year', years: 'Year', yearly: 'Year', annual: 'Year', annually: 'Year' };
         data.slice(1).forEach((r, k) => {
             const line = k + 2, get = i => (i >= 0 && r[i] !== undefined ? String(r[i]).trim() : ''), bad = reason => out.skipped.push({ line, reason });
             const title = get(iTitle); if (!title) return bad('No title');
-            const kindRaw = norm(get(iKind)), kind = kindRaw === 'task' || kindRaw === 'todo' ? 'Task' : kindRaw === 'note' ? 'Note' : kindRaw === '' || kindRaw === 'event' ? 'Event' : null;
+            const kindRaw = norm(get(iKind)), kind = kindRaw === 'task' || kindRaw === 'todo' ? 'Task' : kindRaw === 'note' ? 'Note' : kindRaw === 'event' ? 'Event' : kindRaw === '' ? 'Task' : null;      // no kind given: a task, like a new row
             if (!kind) return bad(`Unknown kind "${get(iKind)}" (use Event, Task or Note)`);
-            const row = { title: title.slice(0, 200), kind, eventDate: '', repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: get(iNotes) };
+            const pr = /^[012]$/.test(get(iPrio)) ? +get(iPrio) : PRIO[norm(get(iPrio))]; if (pr === undefined) return bad(`Unknown priority "${get(iPrio)}" (use Normal, Yellow or Red)`);
+            const row = { title: title.slice(0, 200), kind, eventDate: '', repeatUnit: 'None', repeatEvery: 1, endDate: '', doneDate: '', notes: get(iNotes), priority: pr };
             if (kind !== 'Note') {
                 const d = parseDate(get(iDate)); if (!d) return bad(get(iDate) ? `Cannot read the date "${get(iDate)}"` : 'No date');
                 row.eventDate = d;
@@ -510,6 +516,7 @@
             else if (ty === 'INTEGER') {
                 v = c === 'archived' ? (Number(v) ? 1 : 0) : toInt(v);
                 if ((c === 'every' || c === 'repeatEvery') && !(v >= 1 && v <= MAX_EVERY)) v = 1;
+                if (c === 'priority') v = priorityOf({ priority: v });
                 if (c === 'dueDay' && !(v >= 1 && v <= 31)) v = null;
                 if (c === 'dueMonth' && !(v >= 1 && v <= 12)) v = null;
                 if (c === 'commitmentId' && !(v > 0)) v = null;
@@ -529,7 +536,8 @@
 
     // Small in-place steps between neighbouring formats (v4 / v5 files still need the v6.0 build). Each runs in a transaction.
     const UPGRADES = {
-        6: db => { if (!rowsOf(db, 'PRAGMA table_info(events)').some(r => r.name === 'endDate')) db.run('ALTER TABLE events ADD COLUMN endDate TEXT'); }      // v7: end date of a repeating event / task
+        6: db => { if (!rowsOf(db, 'PRAGMA table_info(events)').some(r => r.name === 'endDate')) db.run('ALTER TABLE events ADD COLUMN endDate TEXT'); },      // v7: end date of a repeating event / task
+        7: db => { if (!rowsOf(db, 'PRAGMA table_info(events)').some(r => r.name === 'priority')) db.run('ALTER TABLE events ADD COLUMN priority INTEGER NOT NULL DEFAULT 0'); }      // v8: priority colour
     };
     // Opens a tracker database. Empty -> fresh. Current -> checked (missing optional tables / indexes are added).
     // One format behind -> the new column is added. Anything else is rejected and NOT changed.
@@ -633,7 +641,7 @@
     root.Core = {
         SCHEMA_VERSION, SCHEMA, ENUMS, DEFAULTS, MAX_EVERY, MONTH_NAMES, SORT_COLS, SETTINGS, BREAKDOWN_MODES,
         toInt, toMoney, addTo, pad2, isLeap, daysInMonth, iso, isISO, isMonthKey, ymd, validISO, todayISO, monthKey, monthStart, monthEnd, clampDay, addMonths, addDays, daysBetween, fmtDate,
-        occurrencesOf, everyOf, frequencyLabel, needsDueMonth, eventDates, eventDone, eventClosed, eventOccurrence, repeatLabel, seriesEnd, parseCSV, parseDate, eventsFromCSV, EVENT_CSV_COLUMNS, occKey, buildPaidIndex, buildSkipIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
+        occurrencesOf, everyOf, frequencyLabel, needsDueMonth, PRIORITIES, priorityOf, eventDates, eventDone, eventClosed, eventOccurrence, repeatLabel, seriesEnd, parseCSV, parseDate, eventsFromCSV, EVENT_CSV_COLUMNS, occKey, buildPaidIndex, buildSkipIndex, pauseActive, isArchived, statusOf, payTarget, makeWindow, previousWindow, shiftSelection, sanitizeSelection, analyze, trend, breakdownMode, moneyBreakdown, nextEventDate, eventState,
         buildLogQuery, queryAll, rowsOf, listTables, getVersion, createSchema, INS, UPSERT, dbValues, inTx, ensureSchema, readSettings, writeSetting,
         validateCommitment, validateLog, validateEvent
     };

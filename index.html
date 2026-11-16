@@ -7,6 +7,8 @@
     <meta name="referrer" content="no-referrer">
     <script>/* never run inside someone else's page (clickjacking): the app only works as the top-level window */
         if (window.top !== window.self) { document.documentElement.style.display = 'none'; try { window.top.location = window.self.location.href; } catch (e) { } }</script>
+    <script>/* a fade that is cut short (tab switched mid-animation) is reported by Alpine as a rejected promise; it is not an error */
+        window.addEventListener('unhandledrejection', function (e) { if (e.reason && e.reason.isFromCancelledTransition) e.preventDefault(); });</script>
     <script>/* theme before first paint: saved choice (mirrored from the DB) or the device setting */
         (function () { var p = null; try { p = localStorage.getItem('tracker_theme'); } catch (e) { }
             var dark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : true;
@@ -18,22 +20,22 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
     <title>Tracker</title>
     <!-- Everything is local: the app works with no internet connection -->
-    <link rel="stylesheet" href="assets/css/tailwind.css?v=7.0.1">
+    <link rel="stylesheet" href="assets/css/tailwind.css?v=8.0.0">
     <link rel="stylesheet" href="assets/css/fontawesome.min.css">
     <script src="assets/js/sql-wasm.js"></script>
     <script src="assets/js/sql-wasm-binary.js"></script>
     <script src="assets/js/chart.umd.js"></script>
-    <script src="backup-config.js?v=7.0.1"></script>
-    <script src="assets/js/backup.js?v=7.0.1"></script>
-    <script src="assets/js/core.js?v=7.0.1"></script>
-    <script src="assets/js/demo.js?v=7.0.1"></script>
-    <script src="assets/js/app.js?v=7.0.1"></script>
+    <script src="backup-config.js?v=8.0.0"></script>
+    <script src="assets/js/backup.js?v=8.0.0"></script>
+    <script src="assets/js/core.js?v=8.0.0"></script>
+    <script src="assets/js/demo.js?v=8.0.0"></script>
+    <script src="assets/js/app.js?v=8.0.0"></script>
     <!-- Version tags (?v=) above make browsers fetch fresh scripts after each release. Bump them together with appVersion.
          Safety net: if an old cached script still slipped through, reload once instead of showing a broken page. -->
     <script>(function () { if (window.Core && window.Core.moneyBreakdown && window.combo) return;
         try { if (sessionStorage.getItem('tracker_stale_reload')) return; sessionStorage.setItem('tracker_stale_reload', '1'); } catch (e) { return; }
         location.reload(); })();</script>
-    <script src="assets/js/alpine.min.js?v=7.0.1" defer></script>
+    <script src="assets/js/alpine.min.js?v=8.0.0" defer></script>
     <script>/* installable + works offline: the service worker keeps the app files; your data never leaves the device except to YOUR drive */
         if ('serviceWorker' in navigator && location.protocol !== 'file:') addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () { }); });</script>
     <style>
@@ -205,7 +207,7 @@
                     <p x-show="!reminders.now.length" class="text-xs text-slate-500">Nothing for today.</p>
                     <div class="max-h-56 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-1.5">
                         <template x-for="r in reminders.now" :key="r.id">
-                            <div class="flex items-center gap-2 text-xs bg-slate-950/60 px-2.5 py-1.5 rounded-xl border" :class="r.days < 0 ? 'border-red-900/50' : 'border-slate-800/80'" :data-rem="r.id">
+                            <div class="flex items-center gap-2 text-xs bg-slate-950/60 px-2.5 py-1.5 rounded-xl border" :class="r.days < 0 ? 'border-red-900/50' : 'border-slate-800/80'" :style="prioEdgeStyle(r.e)" :data-rem="r.id">
                                 <template x-if="r.kind === 'Task'"><button type="button" @click="toggleDone(r.e)" class="shrink-0 w-7 h-7 rounded-full border-2 border-slate-500 text-transparent hover:border-emerald-500 hover:text-emerald-400 grid place-items-center transition" title="Mark this task done" :aria-label="'Mark done: ' + r.title" data-act="dash-done"><i class="fa-solid fa-check text-[10px]"></i></button></template>
                                 <template x-if="r.kind !== 'Task'"><span class="shrink-0 w-7 h-7 rounded-full bg-sky-500/10 text-sky-400 grid place-items-center"><i class="fa-solid fa-calendar-day text-[10px]"></i></span></template>
                                 <div class="flex-1 min-w-0"><p class="text-white font-medium truncate" x-text="r.title"></p>
@@ -645,7 +647,7 @@
         <div x-show="tab === 'events'" style="display:none" class="space-y-2 sm:space-y-3">
             <div class="card px-3 py-2 sm:p-4 flex items-center justify-between gap-2" data-nosave>
                 <div class="min-w-0"><h2 class="text-sm font-bold text-white truncate"><i class="fa-solid fa-calendar-check text-sky-400 mr-1"></i> Events, Tasks &amp; Notes</h2>
-                    <p class="hidden sm:block text-xs text-slate-400"><b>Event</b> = a day to remember. <b>Task</b> = something to tick off. <b>Note</b> = free text, no date. Events and tasks can repeat every N days, weeks, months or years, with an optional end date.</p></div>
+                    <p class="hidden sm:block text-xs text-slate-400"><b>Task</b> = something to tick off. <b>Event</b> = a day to remember. <b>Note</b> = free text, no date. Tap the flag or row number to mark a row yellow or red; those sort to the top.</p></div>
                 <div class="flex items-center gap-1.5 shrink-0">
                     <button x-show="!isDesktop" @click="showEvFilters = !showEvFilters" :aria-expanded="showEvFilters ? 'true' : 'false'" aria-label="Search and filters" title="Search and filters" class="btn btn-ghost !px-2.5 relative" :class="showEvFilters ? '!border-sky-500 !text-sky-300' : ''"><i class="fa-solid fa-magnifying-glass"></i><span x-show="activeEvFilters" class="absolute -top-1.5 -right-1.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-sky-600 text-onaccent text-[10px] leading-[1.1rem] text-center" x-text="activeEvFilters"></span></button>
                     <button @click="addRow('e')" class="btn btn-sky" title="Add event, task or note" aria-label="Add event, task or note"><i class="fa-solid fa-plus"></i><span class="hidden sm:inline">Add</span></button>
@@ -668,16 +670,17 @@
             </div>
 
             <!-- search + filters: always shown on desktop, behind the search icon on phones -->
-            <div data-nosave x-show="isDesktop || showEvFilters" x-transition.opacity class="panel p-2 sm:p-3 grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs" data-ev-filters>
+            <div data-nosave x-show="isDesktop || showEvFilters" x-transition.opacity class="panel p-2 sm:p-3 grid grid-cols-2 sm:grid-cols-6 lg:grid-cols-7 gap-2 text-xs" data-ev-filters>
                 <input name="ef-q" type="search" x-model="ef.q" placeholder="Search title and notes…" aria-label="Search title and notes" class="inp col-span-2">
                 <select name="ef-status" x-model="ef.status" aria-label="Status" class="inp"><option value="All">All statuses</option><option value="Overdue">Overdue</option><option value="Today">Today</option><option value="Coming">Open / upcoming</option><option value="Done">Done</option><option value="Over">Ended / past</option></select>
                 <select name="ef-repeat" x-model="ef.repeat" aria-label="Repeats" class="inp"><option value="All">Any repeat</option><option value="None">Does not repeat</option><option value="Any">Repeats</option><option value="Day">Every N days</option><option value="Week">Every N weeks</option><option value="Month">Every N months</option><option value="Year">Every N years</option></select>
-                <div class="col-span-2 flex items-center gap-1" title="Show rows whose next date is in this range">
+                <select name="ef-priority" x-model="ef.priority" aria-label="Priority" class="inp"><option value="All">Any priority</option><option value="2">Red</option><option value="1">Yellow</option><option value="0">Normal</option></select>
+                <div class="col-span-2 sm:col-span-1 flex items-center gap-1" title="Show rows whose next date is in this range">
                     <input type="date" name="ef-from" x-model="ef.from" aria-label="Next date from" class="inp" :class="ef.from && ef.to && ef.to < ef.from ? '!border-red-500' : ''">
                     <span class="text-slate-500">–</span>
                     <input type="date" name="ef-to" x-model="ef.to" aria-label="Next date to" class="inp" :class="ef.from && ef.to && ef.to < ef.from ? '!border-red-500' : ''">
                 </div>
-                <div class="col-span-2 sm:col-span-6 flex flex-wrap items-center justify-between gap-2">
+                <div class="col-span-2 sm:col-span-6 lg:col-span-7 flex flex-wrap items-center justify-between gap-2">
                     <label class="flex items-center gap-1.5 text-slate-300"><input name="ef-showdone" type="checkbox" x-model="ef.showDone" class="rounded bg-slate-950 border-slate-700"> Show done, ended and past</label>
                     <span class="flex items-center gap-2"><span x-show="ef.from && ef.to && ef.to < ef.from" class="text-red-400">The end date is before the start date.</span>
                         <button x-show="activeEvFilters" @click="resetEvFilters()" class="btn btn-ghost !py-1"><i class="fa-solid fa-rotate-left"></i> Reset</button></span>
@@ -689,7 +692,7 @@
             <!-- Mobile / tablet: one card each; a task is ticked with the round button on the left -->
             <template x-if="!isDesktop"><div class="space-y-1.5">
                 <template x-for="(e, i) in eRows" :key="e.id">
-                    <div class="card px-3 py-2 text-xs flex items-center gap-2.5" :data-row="e.id" :class="flashId === e.id ? 'ring-2 ring-sky-400' : ''">
+                    <div class="card px-3 py-2 text-xs flex items-center gap-2" :data-row="e.id" :class="flashId === e.id ? 'ring-2 ring-sky-400' : ''" :style="prioEdgeStyle(e)">
                         <template x-if="e.kind === 'Task'"><button type="button" @click="toggleDone(e)" role="checkbox" :aria-checked="evDone(e) ? 'true' : 'false'" :aria-label="(evDone(e) ? 'Re-open ' : 'Mark done: ') + (e.title || 'task')" data-act="ev-done"
                                 class="shrink-0 w-8 h-8 rounded-full border-2 grid place-items-center transition" :class="evDone(e) ? 'bg-emerald-600 border-emerald-600 text-onaccent' : 'border-slate-500 text-transparent hover:border-emerald-500'"><i class="fa-solid fa-check text-xs"></i></button></template>
                         <template x-if="e.kind === 'Event'"><span class="shrink-0 w-8 h-8 rounded-full bg-sky-500/10 text-sky-400 grid place-items-center"><i class="fa-solid fa-calendar-day text-xs"></i></span></template>
@@ -700,6 +703,7 @@
                             <p x-show="e.kind !== 'Note' && e.notes" class="text-[11px] text-amber-300/90 truncate" data-note-preview><i class="fa-solid fa-note-sticky mr-1"></i><span x-text="notePreview(e, 80)"></span></p>
                             <p x-show="errList('e', e).length" class="text-[11px] text-red-400" x-text="errList('e', e).join(' • ')"></p>
                         </div>
+                        <button type="button" @click.stop="cyclePriority(e)" class="shrink-0 w-7 h-7 rounded-full grid place-items-center text-[11px] font-bold transition " :class="prioDot(e)" :style="prioDotStyle(e)" :title="'Priority: ' + prioName(e) + ' - tap to change (normal, yellow, red)'" :aria-label="'Priority ' + prioName(e) + '. Tap to change'" data-nosave data-act="ev-prio"><i class="fa-solid fa-flag text-[10px]"></i></button>
                         <button x-show="e.kind !== 'Note'" type="button" @click.stop="showNote(e.title, e.notes, 'e', e)" class="shrink-0 rounded-lg border px-2 py-1 text-[11px] font-semibold flex items-center gap-1" :class="e.notes ? 'border-amber-500/40 bg-amber-500/15 text-amber-300' : 'border-slate-700 text-slate-400'" :title="e.notes ? 'View / edit note' : 'Add a note'" :aria-label="e.notes ? 'View or edit note' : 'Add a note'" data-act="ev-note"><i class="fa-solid" :class="e.notes ? 'fa-note-sticky' : 'fa-plus'"></i>Note</button>
                         <span x-show="e.kind !== 'Note'" class="badge shrink-0" :class="evClass(e)" x-text="evState(e)"></span>
                     </div>
@@ -708,12 +712,12 @@
 
             <!-- Desktop: one line per row, inline-editable -->
             <template x-if="isDesktop"><div class="card">
-                <table class="grid-tbl w-full table-fixed text-xs"><colgroup><col class="w-[3%]"><col class="w-[4%]"><col class="w-[9%]"><col class="w-[25%]"><col class="w-[12%]"><col class="w-[16%]"><col class="w-[12%]"><col class="w-[13%]"><col class="w-[6%]"></colgroup>
-                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th">#</th><th class="th">Done</th><th class="th">Kind</th><th class="th">Title · note</th><th class="th">Date</th><th class="th">Repeats every</th><th class="th">End date</th><th class="th">Status · next</th><th class="th"><span class="sr-only">Actions</span></th></tr></thead>
+                <table class="grid-tbl w-full table-fixed text-xs"><colgroup><col class="w-[4%]"><col class="w-[4%]"><col class="w-[9%]"><col class="w-[24%]"><col class="w-[12%]"><col class="w-[16%]"><col class="w-[12%]"><col class="w-[13%]"><col class="w-[6%]"></colgroup>
+                    <thead class="bg-slate-950/50 border-b border-slate-800"><tr><th class="th" title="Priority colour - click the number to change it"><i class="fa-solid fa-flag"></i></th><th class="th">Done</th><th class="th">Kind</th><th class="th">Title · note</th><th class="th">Date</th><th class="th">Repeats every</th><th class="th">End date</th><th class="th">Status · next</th><th class="th"><span class="sr-only">Actions</span></th></tr></thead>
                     <tbody class="divide-y divide-slate-800/70">
                         <template x-for="(e, i) in eRows" :key="e.id">
-                            <tr :data-row="e.id" class="hover:bg-slate-800/30" :class="[e._draft ? 'bg-sky-950/30' : '', flashId === e.id ? 'ring-2 ring-inset ring-sky-400/70' : '']">
-                                <td class="td"><span class="rowno" x-text="i + 1"></span></td>
+                            <tr :data-row="e.id" class="hover:bg-slate-800/30" :class="[e._draft ? 'bg-sky-950/30' : '', flashId === e.id ? 'ring-2 ring-inset ring-sky-400/70' : '']" :style="e._draft ? '' : prioRowStyle(e)">
+                                <td class="td"><button type="button" @click.stop="cyclePriority(e)" class="shrink-0 w-7 h-7 rounded-full grid place-items-center text-[11px] font-bold transition " :class="prioDot(e)" :style="prioDotStyle(e)" :title="'Priority: ' + prioName(e) + ' - tap to change (normal, yellow, red)'" :aria-label="'Priority ' + prioName(e) + '. Tap to change'" data-nosave data-act="ev-prio"><span x-text="i + 1"></span></button></td>
                                 <td class="td"><button x-show="e.kind === 'Task' && !e._draft" type="button" @click="toggleDone(e)" role="checkbox" :aria-checked="evDone(e) ? 'true' : 'false'" :title="evDone(e) ? 'Re-open' : 'Mark done'" :aria-label="evDone(e) ? 'Re-open' : 'Mark done'" data-nosave data-act="ev-done"
                                         class="w-6 h-6 rounded-full border-2 grid place-items-center transition" :class="evDone(e) ? 'bg-emerald-600 border-emerald-600 text-onaccent' : 'border-slate-500 text-transparent hover:border-emerald-500'"><i class="fa-solid fa-check text-[10px]"></i></button></td>
                                 <td class="td"><select name="e-kind" x-model="e.kind" @change="$nextTick(() => onKindChange(e))" aria-label="Kind" class="inp"><option>Event</option><option>Task</option><option>Note</option></select></td>
@@ -885,6 +889,10 @@
                     <!-- event / task -->
                     <template x-if="modal.kind === 'e'"><div class="contents">
                         <div class="col-span-2"><label class="lbl">Title *</label><input name="title" type="text" x-model="modal.item.title" :class="bad('e', modal.item, 'title')" class="inp"></div>
+                        <div class="col-span-2"><span class="lbl">Priority</span><div class="flex gap-1.5" role="radiogroup" aria-label="Priority">
+                            <button type="button" role="radio" :aria-checked="prio(modal.item) === 0 ? 'true' : 'false'" @click="modal.item.priority = 0" class="flex-1 rounded-xl border px-2 py-1.5 font-semibold transition" :class="prio(modal.item) === 0 ? 'border-slate-400 bg-slate-700 text-white' : 'border-slate-700 text-slate-400'">Normal</button>
+                            <button type="button" role="radio" :aria-checked="prio(modal.item) === 1 ? 'true' : 'false'" @click="modal.item.priority = 1" class="flex-1 rounded-xl border px-2 py-1.5 font-semibold transition" :class="prio(modal.item) === 1 ? '' : 'border-amber-500/40 text-amber-300'" :style="prio(modal.item) === 1 ? 'background:#facc15;border-color:#facc15;color:#1e293b' : ''" data-act="form-yellow">Yellow</button>
+                            <button type="button" role="radio" :aria-checked="prio(modal.item) === 2 ? 'true' : 'false'" @click="modal.item.priority = 2" class="flex-1 rounded-xl border px-2 py-1.5 font-semibold transition" :class="prio(modal.item) === 2 ? '' : 'border-red-500/40 text-red-300'" :style="prio(modal.item) === 2 ? 'background:#ef4444;border-color:#ef4444;color:#ffffff' : ''" data-act="form-red">Red</button></div></div>
                         <div :class="modal.item.kind === 'Note' ? 'col-span-2' : ''"><label class="lbl">Kind</label><select name="kind" x-model="modal.item.kind" @change="$nextTick(() => onKindChange(modal.item))" class="inp"><option value="Event">Event - a day to remember</option><option value="Task">Task - something to tick off</option><option value="Note">Note - text only, no date</option></select></div>
                         <template x-if="modal.item.kind !== 'Note'"><div class="contents">
                             <div><label class="lbl">Date *</label><input name="eventdate" type="date" x-model="modal.item.eventDate" :class="bad('e', modal.item, 'eventDate')" class="inp"></div>
@@ -973,7 +981,7 @@
             <div x-show="evImport.skipped.length" class="max-h-32 overflow-y-auto space-y-0.5 text-amber-300">
                 <template x-for="(k, i) in evImport.skipped.slice(0, 50)" :key="i"><p x-text="'Line ' + k.line + ': ' + k.reason"></p></template>
             </div>
-            <p class="text-[10px] text-slate-500">Rows are added to what you already have; nothing is replaced. Columns: Title, Kind (Event / Task / Note), Date, Repeat (None / Day / Week / Month / Year), Every, End date, Notes. Dates as 2026-11-15 or 15/11/2026.</p>
+            <p class="text-[10px] text-slate-500">Rows are added to what you already have; nothing is replaced. Columns: Title, Kind (Event / Task / Note), Date, Repeat (None / Day / Week / Month / Year), Every, End date, Priority (Normal / Yellow / Red), Notes. Dates as 2026-11-15 or 15/11/2026.</p>
             <div class="flex justify-end gap-2"><button @click="evImport.show = false" class="btn btn-ghost">Cancel</button>
                 <button @click="confirmEvImport()" :disabled="!evImport.rows.length" class="btn btn-sky disabled:opacity-40" data-act="import-confirm"><i class="fa-solid fa-check"></i> <span x-text="'Add ' + evImport.rows.length + ' row(s)'"></span></button></div>
         </div>
